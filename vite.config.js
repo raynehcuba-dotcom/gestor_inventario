@@ -3,7 +3,7 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
-  base: '/gestor_inventario/', // ← ESTA ES LA LÍNEA CLAVE
+  base: '/gestor_inventario/', // ← Esta es la única línea que importa agregar
   plugins: [react(), tailwindcss()],
   server: {
     host: "0.0.0.0",
