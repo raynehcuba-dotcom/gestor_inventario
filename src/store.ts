@@ -127,6 +127,15 @@ export async function savePurchase(purchase: Purchase): Promise<void> {
     // Update stock
     run('UPDATE products SET stock = stock + ? WHERE id = ?', [item.quantity, item.productId]);
   }
+
+  // Register payable to provider for the purchase
+  if (purchase.providerId) {
+    const payableId = generateId();
+    run(`INSERT INTO payables (id, provider_id, purchase_id, type, amount, description, date) VALUES (?,?,?,?,?,?,?)`,
+      [payableId, purchase.providerId, purchase.id, 'purchase', purchase.totalCost,
+       `Compra/Recepción: ${purchase.items.length} producto(s)`, purchase.date]);
+  }
+
   await persist();
 }
 
@@ -167,6 +176,16 @@ export async function saveSale(sale: Sale): Promise<void> {
     
     // Update stock
     run('UPDATE products SET stock = stock - ? WHERE id = ?', [item.quantity, item.productId]);
+    
+    // Register payable to provider (cost of product sold)
+    const product = getOne<any>('SELECT provider_id, cost_price FROM products WHERE id = ?', [item.productId]);
+    if (product && product.provider_id) {
+      const payableId = generateId();
+      const payableAmount = product.cost_price * item.quantity;
+      run(`INSERT INTO payables (id, provider_id, sale_id, type, amount, description, date) VALUES (?,?,?,?,?,?,?)`,
+        [payableId, product.provider_id, sale.id, 'sale', payableAmount, 
+         `Venta: ${item.productName} x${item.quantity}`, sale.date]);
+    }
   }
 
   // Update invoice number
@@ -262,6 +281,64 @@ export function setCurrentUser(user: User | null): void {
   } else {
     localStorage.removeItem(SESSION_KEY);
   }
+}
+
+// ============ PAYABLES (Obligaciones) ============
+
+export function getPayables(): import('./types').Payable[] {
+  const rows = getAll<any>(
+    'SELECT id, provider_id, sale_id, purchase_id, type, amount, description, date FROM payables ORDER BY date DESC'
+  );
+  return rows.map(r => ({
+    id: r.id,
+    providerId: r.provider_id,
+    saleId: r.sale_id || undefined,
+    purchaseId: r.purchase_id || undefined,
+    type: r.type,
+    amount: r.amount,
+    description: r.description || '',
+    date: r.date,
+  }));
+}
+
+export function getPayablesByProvider(providerId: string): import('./types').Payable[] {
+  const rows = getAll<any>(
+    'SELECT id, provider_id, sale_id, purchase_id, type, amount, description, date FROM payables WHERE provider_id = ? ORDER BY date DESC',
+    [providerId]
+  );
+  return rows.map(r => ({
+    id: r.id,
+    providerId: r.provider_id,
+    saleId: r.sale_id || undefined,
+    purchaseId: r.purchase_id || undefined,
+    type: r.type,
+    amount: r.amount,
+    description: r.description || '',
+    date: r.date,
+  }));
+}
+
+export async function savePayable(payable: import('./types').Payable): Promise<void> {
+  run(`INSERT INTO payables (id, provider_id, sale_id, purchase_id, type, amount, description, date) VALUES (?,?,?,?,?,?,?,?)`,
+    [payable.id, payable.providerId, payable.saleId || null, payable.purchaseId || null, payable.type, payable.amount, payable.description, payable.date]);
+  await persist();
+}
+
+export function getProviderBalance(providerId: string): number {
+  const rows = getAll<any>(
+    'SELECT type, amount FROM payables WHERE provider_id = ?',
+    [providerId]
+  );
+  
+  let balance = 0;
+  for (const row of rows) {
+    if (row.type === 'sale' || row.type === 'purchase') {
+      balance += row.amount; // Deuda (obligación de pagar)
+    } else if (row.type === 'payment') {
+      balance -= row.amount; // Pago (reduce la deuda)
+    }
+  }
+  return balance;
 }
 
 // ============ DB EXPORT/IMPORT ============
