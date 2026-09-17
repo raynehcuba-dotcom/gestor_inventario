@@ -1,269 +1,488 @@
-import { User, Product, Provider, Purchase, Sale, BusinessConfig, SaleItem, PurchaseItem } from './types';
-import { run, getAll, getOne, persist, simpleHash } from './database';
+import { writable, type Writable } from 'svelte/store';
+import type { User, Provider, Product, Purchase, Sale, Config, Payable } from './types';
+import { 
+  initDatabase, 
+  getAll, 
+  getOne, 
+  run, 
+  persist,
+  exportDatabase,
+  importDatabase
+} from './database';
 
-function generateId(): string {
-  return crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).substr(2);
-}
+// Store global del estado de autenticación
+export const currentUser: Writable<User | null> = writable(null);
 
-// ============ AUTH ============
+// Store global para el estado de carga
+export const loading: Writable<boolean> = writable(false);
 
-export function authenticate(username: string, password: string): User | null {
-  const hash = simpleHash(password);
-  const row = getOne<any>(
-    'SELECT id, username, password_hash, role, full_name FROM users WHERE username = ? AND password_hash = ?',
-    [username, hash]
-  );
-  if (!row) return null;
-  return {
-    id: row.id,
-    username: row.username,
-    passwordHash: row.password_hash,
-    role: row.role,
-    fullName: row.full_name,
-  };
-}
+// Store para configuración del negocio
+export const businessConfig: Writable<Config> = writable({
+  business_name: 'Mi Negocio',
+  business_address: 'Dirección del negocio',
+  business_phone: 'Teléfono del negocio',
+  business_nif: 'NIF del negocio',
+  last_invoice_number: 0
+});
 
-// ============ PRODUCTS ============
+// Store para proveedores
+export const providers: Writable<Provider[]> = writable([]);
 
-export function getProducts(): Product[] {
-  const rows = getAll<any>(
-    'SELECT id, code, name, category, cost_price, sale_price, stock, min_stock, provider_id, created_at FROM products ORDER BY name'
-  );
-  return rows.map(r => ({
-    id: r.id,
-    code: r.code,
-    name: r.name,
-    category: r.category,
-    costPrice: r.cost_price,
-    salePrice: r.sale_price,
-    stock: r.stock,
-    minStock: r.min_stock,
-    providerId: r.provider_id || '',
-    createdAt: r.created_at,
-  }));
-}
+// Store para productos
+export const products: Writable<Product[]> = writable([]);
 
-export async function saveProduct(product: Product): Promise<void> {
-  const existing = getOne<any>('SELECT id FROM products WHERE id = ?', [product.id]);
-  if (existing) {
-    run(`UPDATE products SET code=?, name=?, category=?, cost_price=?, sale_price=?, stock=?, min_stock=?, provider_id=? WHERE id=?`,
-      [product.code, product.name, product.category, product.costPrice, product.salePrice, product.stock, product.minStock, product.providerId, product.id]);
-  } else {
-    run(`INSERT INTO products (id, code, name, category, cost_price, sale_price, stock, min_stock, provider_id, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)`,
-      [product.id, product.code, product.name, product.category, product.costPrice, product.salePrice, product.stock, product.minStock, product.providerId, product.createdAt]);
+// Store para compras
+export const purchases: Writable<Purchase[]> = writable([]);
+
+// Store para ventas
+export const sales: Writable<Sale[]> = writable([]);
+
+// Store para cuentas por pagar
+export const payables: Writable<Payable[]> = writable([]);
+
+// Función para inicializar la aplicación
+export async function initializeApp(): Promise<void> {
+  loading.set(true);
+  try {
+    await initDatabase();
+    await loadAllData();
+    await loadBusinessConfig();
+  } finally {
+    loading.set(false);
   }
-  await persist();
 }
 
-export async function deleteProduct(id: string): Promise<void> {
-  run('DELETE FROM products WHERE id = ?', [id]);
-  await persist();
+// Cargar toda la data inicial
+async function loadAllData(): Promise<void> {
+  providers.set(await getAllProviders());
+  products.set(await getAllProducts());
+  purchases.set(await getAllPurchases());
+  sales.set(await getAllSales());
+  payables.set(await getAllPayables());
 }
 
-// ============ PROVIDERS ============
-
-export function getProviders(): Provider[] {
-  const rows = getAll<any>(
-    'SELECT id, name, contact, phone, email, address, created_at FROM providers ORDER BY name'
-  );
-  return rows.map(r => ({
-    id: r.id,
-    name: r.name,
-    contact: r.contact || '',
-    phone: r.phone || '',
-    email: r.email || '',
-    address: r.address || '',
-    createdAt: r.created_at,
-  }));
-}
-
-export async function saveProvider(provider: Provider): Promise<void> {
-  const existing = getOne<any>('SELECT id FROM providers WHERE id = ?', [provider.id]);
-  if (existing) {
-    run(`UPDATE providers SET name=?, contact=?, phone=?, email=?, address=? WHERE id=?`,
-      [provider.name, provider.contact, provider.phone, provider.email, provider.address, provider.id]);
-  } else {
-    run(`INSERT INTO providers (id, name, contact, phone, email, address, created_at) VALUES (?,?,?,?,?,?,?)`,
-      [provider.id, provider.name, provider.contact, provider.phone, provider.email, provider.address, provider.createdAt]);
+// Cargar configuración del negocio
+async function loadBusinessConfig(): Promise<void> {
+  const config = await getAll<{ key: string; value: string }>('SELECT * FROM config');
+  const configObj: Partial<Config> = {};
+  
+  for (const item of config) {
+    if (item.key === 'last_invoice_number') {
+      configObj[item.key] = parseInt(item.value) || 0;
+    } else {
+      configObj[item.key] = item.value;
+    }
   }
+  
+  businessConfig.set(configObj as Config);
+}
+
+// ==================== AUTHENTICATION ====================
+export async function login(username: string, password: string): Promise<User | null> {
+  loading.set(true);
+  try {
+    const user = getOne<User>(
+      'SELECT id, username, role, full_name FROM users WHERE username = ? AND password_hash = ?',
+      [username, simpleHash(password)]
+    );
+    
+    if (user) {
+      currentUser.set(user);
+      return user;
+    }
+    return null;
+  } finally {
+    loading.set(false);
+  }
+}
+
+export async function logout(): Promise<void> {
+  currentUser.set(null);
+}
+
+export async function changePassword(userId: string, oldPassword: string, newPassword: string): Promise<boolean> {
+  loading.set(true);
+  try {
+    const user = getOne<{ password_hash: string }>(
+      'SELECT password_hash FROM users WHERE id = ?',
+      [userId]
+    );
+    
+    if (user && user.password_hash === simpleHash(oldPassword)) {
+      run(
+        'UPDATE users SET password_hash = ? WHERE id = ?',
+        [simpleHash(newPassword), userId]
+      );
+      await persist();
+      return true;
+    }
+    return false;
+  } finally {
+    loading.set(false);
+  }
+}
+
+// ==================== PROVIDERS ====================
+export async function getAllProviders(): Promise<Provider[]> {
+  return getAll<Provider>(
+    `SELECT * FROM providers ORDER BY name ASC`
+  );
+}
+
+export async function getProviderById(id: string): Promise<Provider | null> {
+  return getOne<Provider>('SELECT * FROM providers WHERE id = ?', [id]);
+}
+
+export async function createProvider(provider: Omit<Provider, 'id' | 'created_at'>): Promise<Provider> {
+  const id = `prov-${Date.now()}`;
+  const createdAt = new Date().toISOString();
+  
+  run(
+    `INSERT INTO providers (id, name, contact, phone, email, address, created_at) 
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [id, provider.name, provider.contact, provider.phone, provider.email, provider.address, createdAt]
+  );
+  
   await persist();
+  const newProvider = await getProviderById(id);
+  if (newProvider) {
+    providers.update(p => [...p, newProvider]);
+  }
+  return newProvider!;
+}
+
+export async function updateProvider(provider: Provider): Promise<void> {
+  run(
+    `UPDATE providers SET name = ?, contact = ?, phone = ?, email = ?, address = ?
+     WHERE id = ?`,
+    [provider.name, provider.contact, provider.phone, provider.email, provider.address, provider.id]
+  );
+  
+  await persist();
+  providers.update(p => p.map(pr => pr.id === provider.id ? provider : pr));
 }
 
 export async function deleteProvider(id: string): Promise<void> {
   run('DELETE FROM providers WHERE id = ?', [id]);
   await persist();
+  providers.update(p => p.filter(pr => pr.id !== id));
 }
 
-// ============ PURCHASES ============
-
-export function getPurchases(): Purchase[] {
-  const rows = getAll<any>('SELECT id, date, provider_id, total_cost, notes FROM purchases ORDER BY date DESC');
-  return rows.map(r => {
-    const items = getAll<any>('SELECT id, product_id, quantity, cost_price FROM purchase_items WHERE purchase_id = ?', [r.id]);
-    return {
-      id: r.id,
-      date: r.date,
-      providerId: r.provider_id || '',
-      totalCost: r.total_cost,
-      notes: r.notes || '',
-      items: items.map(i => ({
-        productId: i.product_id,
-        quantity: i.quantity,
-        costPrice: i.cost_price,
-      })),
-    };
-  });
+// ==================== PRODUCTS ====================
+export async function getAllProducts(): Promise<Product[]> {
+  return getAll<Product>(
+    `SELECT p.*, pr.name as provider_name
+     FROM products p
+     LEFT JOIN providers pr ON p.provider_id = pr.id
+     ORDER BY p.name ASC`
+  );
 }
 
-export async function savePurchase(purchase: Purchase): Promise<void> {
-  run(`INSERT INTO purchases (id, date, provider_id, total_cost, notes) VALUES (?,?,?,?,?)`,
-    [purchase.id, purchase.date, purchase.providerId, purchase.totalCost, purchase.notes]);
+export async function getProductById(id: string): Promise<Product | null> {
+  return getOne<Product>(
+    `SELECT p.*, pr.name as provider_name
+     FROM products p
+     LEFT JOIN providers pr ON p.provider_id = pr.id
+     WHERE p.id = ?`,
+    [id]
+  );
+}
 
+export async function createProduct(product: Omit<Product, 'id' | 'created_at'>): Promise<Product> {
+  const id = `prod-${Date.now()}`;
+  const createdAt = new Date().toISOString();
+  
+  run(
+    `INSERT INTO products (id, code, name, category, cost_price, sale_price, stock, min_stock, provider_id, created_at) 
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, product.code, product.name, product.category, product.cost_price, product.sale_price, product.stock, product.min_stock, product.provider_id, createdAt]
+  );
+  
+  await persist();
+  const newProduct = await getProductById(id);
+  if (newProduct) {
+    products.update(p => [...p, newProduct]);
+  }
+  return newProduct!;
+}
+
+export async function updateProduct(product: Product): Promise<void> {
+  run(
+    `UPDATE products SET code = ?, name = ?, category = ?, cost_price = ?, sale_price = ?, 
+          stock = ?, min_stock = ?, provider_id = ?
+     WHERE id = ?`,
+    [product.code, product.name, product.category, product.cost_price, product.sale_price, 
+     product.stock, product.min_stock, product.provider_id, product.id]
+  );
+  
+  await persist();
+  products.update(p => p.map(pr => pr.id === product.id ? product : pr));
+}
+
+export async function deleteProduct(id: string): Promise<void> {
+  run('DELETE FROM products WHERE id = ?', [id]);
+  await persist();
+  products.update(p => p.filter(pr => pr.id !== id));
+}
+
+export async function updateStock(productId: string, quantity: number): Promise<void> {
+  run(
+    `UPDATE products SET stock = stock + ? WHERE id = ?`,
+    [quantity, productId]
+  );
+  
+  await persist();
+  const updatedProducts = await getAllProducts();
+  products.set(updatedProducts);
+}
+
+// ==================== PURCHASES ====================
+export async function getAllPurchases(): Promise<Purchase[]> {
+  return getAll<Purchase>(
+    `SELECT p.*, pr.name as provider_name
+     FROM purchases p
+     LEFT JOIN providers pr ON p.provider_id = pr.id
+     ORDER BY p.date DESC, p.id DESC`
+  );
+}
+
+export async function getPurchaseById(id: string): Promise<Purchase> {
+  const purchase = getOne<Purchase>(
+    `SELECT p.*, pr.name as provider_name
+     FROM purchases p
+     LEFT JOIN providers pr ON p.provider_id = pr.id
+     WHERE p.id = ?`,
+    [id]
+  )!;
+  
+  const items = await getAll<any>(
+    `SELECT pi.*, pr.name as product_name
+     FROM purchase_items pi
+     LEFT JOIN products pr ON pi.product_id = pr.id
+     WHERE pi.purchase_id = ?`,
+    [id]
+  );
+  
+  return { ...purchase, items };
+}
+
+export async function createPurchase(purchase: Omit<Purchase, 'id'>): Promise<Purchase> {
+  const id = `pur-${Date.now()}`;
+  
+  run(
+    `INSERT INTO purchases (id, date, provider_id, total_cost, notes) 
+     VALUES (?, ?, ?, ?, ?)`,
+    [id, purchase.date, purchase.provider_id, purchase.total_cost, purchase.notes]
+  );
+  
+  // Insertar items de compra
   for (const item of purchase.items) {
-    const itemId = generateId();
-    run(`INSERT INTO purchase_items (id, purchase_id, product_id, quantity, cost_price) VALUES (?,?,?,?,?)`,
-      [itemId, purchase.id, item.productId, item.quantity, item.costPrice]);
+    const itemId = `puri-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    run(
+      `INSERT INTO purchase_items (id, purchase_id, product_id, quantity, cost_price) 
+       VALUES (?, ?, ?, ?, ?)`,
+      [itemId, id, item.product_id, item.quantity, item.cost_price]
+    );
     
-    // Update stock
-    run('UPDATE products SET stock = stock + ? WHERE id = ?', [item.quantity, item.productId]);
+    // Actualizar stock
+    await updateStock(item.product_id, item.quantity);
   }
+  
   await persist();
+  const newPurchase = await getPurchaseById(id);
+  purchases.update(p => [newPurchase, ...p]);
+  return newPurchase;
 }
 
-// ============ SALES ============
-
-export function getSales(): Sale[] {
-  const rows = getAll<any>('SELECT id, invoice_number, date, seller_id, subtotal, total, payment_method, notes FROM sales ORDER BY date DESC');
-  return rows.map(r => {
-    const items = getAll<any>('SELECT id, product_id, product_name, quantity, unit_price, total FROM sale_items WHERE sale_id = ?', [r.id]);
-    return {
-      id: r.id,
-      invoiceNumber: r.invoice_number,
-      date: r.date,
-      sellerId: r.seller_id || '',
-      subtotal: r.subtotal,
-      total: r.total,
-      paymentMethod: r.payment_method || 'Efectivo',
-      notes: r.notes || '',
-      items: items.map(i => ({
-        productId: i.product_id,
-        productName: i.product_name,
-        quantity: i.quantity,
-        unitPrice: i.unit_price,
-        total: i.total,
-      })),
-    };
-  });
+// ==================== SALES ====================
+export async function getAllSales(): Promise<Sale[]> {
+  return getAll<Sale>(
+    `SELECT s.*, u.full_name as seller_name
+     FROM sales s
+     LEFT JOIN users u ON s.seller_id = u.id
+     ORDER BY s.date DESC, s.invoice_number DESC`
+  );
 }
 
-export async function saveSale(sale: Sale): Promise<void> {
-  run(`INSERT INTO sales (id, invoice_number, date, seller_id, subtotal, total, payment_method, notes) VALUES (?,?,?,?,?,?,?,?)`,
-    [sale.id, sale.invoiceNumber, sale.date, sale.sellerId, sale.subtotal, sale.total, sale.paymentMethod, sale.notes]);
+export async function getSaleById(id: string): Promise<Sale> {
+  const sale = getOne<Sale>(
+    `SELECT s.*, u.full_name as seller_name
+     FROM sales s
+     LEFT JOIN users u ON s.seller_id = u.id
+     WHERE s.id = ?`,
+    [id]
+  )!;
+  
+  const items = await getAll<any>(
+    `SELECT si.*, pr.name as product_name
+     FROM sale_items si
+     LEFT JOIN products pr ON si.product_id = pr.id
+     WHERE si.sale_id = ?`,
+    [id]
+  );
+  
+  return { ...sale, items };
+}
 
+export async function createSale(sale: Omit<Sale, 'id' | 'invoice_number'>): Promise<Sale> {
+  // Obtener número de factura
+  const lastInvoiceNumber = getOne<{ value: string }>('SELECT value FROM config WHERE key = "last_invoice_number"');
+  const invoiceNumber = (parseInt(lastInvoiceNumber?.value || '0') + 1).toString().padStart(6, '0');
+  
+  const id = `sal-${Date.now()}`;
+  
+  run(
+    `INSERT INTO sales (id, invoice_number, date, seller_id, subtotal, total, payment_method, notes) 
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, invoiceNumber, sale.date, sale.seller_id, sale.subtotal, sale.total, sale.payment_method, sale.notes]
+  );
+  
+  // Insertar items de venta
   for (const item of sale.items) {
-    const itemId = generateId();
-    run(`INSERT INTO sale_items (id, sale_id, product_id, product_name, quantity, unit_price, total) VALUES (?,?,?,?,?,?,?)`,
-      [itemId, sale.id, item.productId, item.productName, item.quantity, item.unitPrice, item.total]);
+    const itemId = `sali-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    run(
+      `INSERT INTO sale_items (id, sale_id, product_id, product_name, quantity, unit_price, total) 
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [itemId, id, item.product_id, item.product_name, item.quantity, item.unit_price, item.total]
+    );
     
-    // Update stock
-    run('UPDATE products SET stock = stock - ? WHERE id = ?', [item.quantity, item.productId]);
+    // Actualizar stock
+    await updateStock(item.product_id, -item.quantity);
   }
-
-  // Update invoice number
-  run(`UPDATE config SET value = ? WHERE key = 'last_invoice_number'`, [sale.invoiceNumber.toString()]);
+  
+  // Actualizar número de factura
+  run(
+    `UPDATE config SET value = ? WHERE key = "last_invoice_number"`,
+    [invoiceNumber]
+  );
   
   await persist();
+  const newSale = await getSaleById(id);
+  sales.update(s => [newSale, ...s]);
+  return newSale;
 }
 
-export function getNextInvoiceNumber(): number {
-  const row = getOne<any>("SELECT value FROM config WHERE key = 'last_invoice_number'");
-  return (parseInt(row?.value || '0') || 0) + 1;
+// ==================== PAYABLES ====================
+export async function getAllPayables(): Promise<Payable[]> {
+  return getAll<Payable>(
+    `SELECT pa.*, pr.name as provider_name
+     FROM payables pa
+     LEFT JOIN providers pr ON pa.provider_id = pr.id
+     ORDER BY pa.date DESC`
+  );
 }
 
-// ============ CONFIG ============
+export async function getPayableById(id: string): Promise<Payable | null> {
+  return getOne<Payable>(
+    `SELECT pa.*, pr.name as provider_name
+     FROM payables pa
+     LEFT JOIN providers pr ON pa.provider_id = pr.id
+     WHERE pa.id = ?`,
+    [id]
+  );
+}
 
-export function getConfig(): BusinessConfig {
-  const rows = getAll<any>('SELECT key, value FROM config');
-  const map: Record<string, string> = {};
-  rows.forEach(r => { map[r.key] = r.value; });
+export async function createPayable(payable: Omit<Payable, 'id'>): Promise<Payable> {
+  const id = `pay-${Date.now()}`;
   
-  return {
-    name: map['business_name'] || 'MIPYME Demo',
-    address: map['business_address'] || '',
-    phone: map['business_phone'] || '',
-    nif: map['business_nif'] || '',
-    lastInvoiceNumber: parseInt(map['last_invoice_number'] || '0') || 0,
-  };
-}
-
-export async function saveConfig(config: BusinessConfig): Promise<void> {
-  const entries: [string, string][] = [
-    ['business_name', config.name],
-    ['business_address', config.address],
-    ['business_phone', config.phone],
-    ['business_nif', config.nif],
-    ['last_invoice_number', config.lastInvoiceNumber.toString()],
-  ];
-  for (const [key, value] of entries) {
-    run(`INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)`, [key, value]);
-  }
+  run(
+    `INSERT INTO payables (id, provider_id, sale_id, purchase_id, type, amount, description, date) 
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, payable.provider_id, payable.sale_id, payable.purchase_id, payable.type, payable.amount, payable.description, payable.date]
+  );
+  
   await persist();
-}
-
-// ============ USERS ============
-
-export function getUsers(): User[] {
-  const rows = getAll<any>('SELECT id, username, password_hash, role, full_name FROM users');
-  return rows.map(r => ({
-    id: r.id,
-    username: r.username,
-    passwordHash: r.password_hash,
-    role: r.role,
-    fullName: r.full_name,
-  }));
-}
-
-export async function saveUser(user: User & { passwordHash?: string }): Promise<void> {
-  const existing = getOne<any>('SELECT id FROM users WHERE id = ?', [user.id]);
-  if (existing) {
-    if (user.passwordHash && user.passwordHash.length > 0 && !user.passwordHash.match(/^[a-z0-9]+$/)) {
-      // New password provided
-      const hash = simpleHash(user.passwordHash);
-      run(`UPDATE users SET username=?, password_hash=?, role=?, full_name=? WHERE id=?`,
-        [user.username, hash, user.role, user.fullName, user.id]);
-    } else {
-      run(`UPDATE users SET username=?, role=?, full_name=? WHERE id=?`,
-        [user.username, user.role, user.fullName, user.id]);
-    }
-  } else {
-    const hash = simpleHash(user.passwordHash || 'default');
-    run(`INSERT INTO users (id, username, password_hash, role, full_name) VALUES (?,?,?,?,?)`,
-      [user.id, user.username, hash, user.role, user.fullName]);
+  const newPayable = await getPayableById(id);
+  if (newPayable) {
+    payables.update(p => [...p, newPayable]);
   }
+  return newPayable!;
+}
+
+export async function deletePayable(id: string): Promise<void> {
+  run('DELETE FROM payables WHERE id = ?', [id]);
   await persist();
+  payables.update(p => p.filter(pa => pa.id !== id));
 }
 
-// ============ SESSION (localStorage for current user only) ============
-
-const SESSION_KEY = 'inv_current_user';
-
-export function getCurrentUser(): User | null {
-  try {
-    const data = localStorage.getItem(SESSION_KEY);
-    return data ? JSON.parse(data) : null;
-  } catch {
-    return null;
+// ==================== CONFIGURATION ====================
+export async function updateBusinessConfig(config: Config): Promise<void> {
+  for (const [key, value] of Object.entries(config)) {
+    run(
+      `INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)`,
+      [key, String(value)]
+    );
   }
+  
+  await persist();
+  businessConfig.set(config);
 }
 
-export function setCurrentUser(user: User | null): void {
-  if (user) {
-    localStorage.setItem(SESSION_KEY, JSON.stringify(user));
-  } else {
-    localStorage.removeItem(SESSION_KEY);
+// ==================== REPORTS ====================
+export async function getLowStockProducts(): Promise<Product[]> {
+  return getAll<Product>(
+    `SELECT p.*, pr.name as provider_name
+     FROM products p
+     LEFT JOIN providers pr ON p.provider_id = pr.id
+     WHERE p.stock <= p.min_stock
+     ORDER BY p.stock ASC`
+  );
+}
+
+export async function getDailySales(date: string): Promise<Sale[]> {
+  return getAll<Sale>(
+    `SELECT s.*, u.full_name as seller_name
+     FROM sales s
+     LEFT JOIN users u ON s.seller_id = u.id
+     WHERE DATE(s.date) = ?
+     ORDER BY s.date DESC`,
+    [date]
+  );
+}
+
+export async function getMonthlySales(year: number, month: number): Promise<Sale[]> {
+  const startDate = new Date(year, month - 1, 1).toISOString().split('T')[0];
+  const endDate = new Date(year, month, 0).toISOString().split('T')[0];
+  
+  return getAll<Sale>(
+    `SELECT s.*, u.full_name as seller_name
+     FROM sales s
+     LEFT JOIN users u ON s.seller_id = u.id
+     WHERE DATE(s.date) >= ? AND DATE(s.date) <= ?
+     ORDER BY s.date DESC`,
+    [startDate, endDate]
+  );
+}
+
+export async function getSalesBySeller(sellerId: string, startDate: string, endDate: string): Promise<Sale[]> {
+  return getAll<Sale>(
+    `SELECT s.*, u.full_name as seller_name
+     FROM sales s
+     LEFT JOIN users u ON s.seller_id = u.id
+     WHERE s.seller_id = ? AND DATE(s.date) >= ? AND DATE(s.date) <= ?
+     ORDER BY s.date DESC`,
+    [sellerId, startDate, endDate]
+  );
+}
+
+// ==================== EXPORT/IMPORT ====================
+export function exportDB(): Uint8Array | null {
+  return exportDatabase();
+}
+
+export async function importDB(buffer: ArrayBuffer): Promise<void> {
+  await importDatabase(buffer);
+  await loadAllData();
+  await loadBusinessConfig();
+}
+
+// ==================== HELPERS ====================
+function simpleHash(str: string): string {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
   }
+  return hash.toString(36) + str.length.toString(36);
 }
-
-// ============ DB EXPORT/IMPORT ============
-
-export { exportDatabase, importDatabase } from './database';

@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
-import { getProducts, getSales, getConfig } from '../store';
+import { getProducts, getSales, getConfig, getProviders, getProviderBalance } from '../store';
 import { useAuth } from '../context/AuthContext';
-import { TrendingUp, TrendingDown, Package, ShoppingCart, DollarSign, AlertTriangle } from 'lucide-react';
+import { TrendingUp, TrendingDown, Package, ShoppingCart, DollarSign, AlertTriangle, CreditCard } from 'lucide-react';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 
 export default function Dashboard() {
@@ -10,6 +10,8 @@ export default function Dashboard() {
   const sales = getSales();
   const config = getConfig();
 
+  const providers = getProviders();
+  
   const stats = useMemo(() => {
     const now = new Date();
     const thisWeekStart = new Date(now);
@@ -31,6 +33,9 @@ export default function Dashboard() {
     const lastWeekRevenue = lastWeekSales.reduce((sum, s) => sum + s.total, 0);
     const thisMonthRevenue = thisMonthSales.reduce((sum, s) => sum + s.total, 0);
     const lastMonthRevenue = lastMonthSales.reduce((sum, s) => sum + s.total, 0);
+
+    // Calculate total payables
+    const totalPayables = providers.reduce((sum, p) => sum + getProviderBalance(p.id), 0);
 
     // Calculate profit (revenue - cost)
     const calcProfit = (saleList: typeof sales) => {
@@ -131,8 +136,9 @@ export default function Dashboard() {
       lowStockProducts, outOfStockProducts, topProducts, weeklyTrend, monthlyTrend, categories,
       totalProducts: products.length,
       totalSales: sales.length,
+      totalPayables,
     };
-  }, [products, sales]);
+  }, [products, sales, providers]);
 
   const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6'];
 
@@ -208,6 +214,29 @@ export default function Dashboard() {
                 {p.name} — Stock bajo ({p.stock} uds)
               </span>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Payables summary (admin only) */}
+      {isAdmin && stats.totalPayables > 0 && (
+        <div className="bg-white rounded-xl border border-red-200 p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-gray-800 flex items-center gap-2">
+              <CreditCard className="w-4 h-4 text-red-500" />
+              Obligaciones pendientes con proveedores
+            </h3>
+            <span className="text-xl font-bold text-red-600">{formatCurrency(stats.totalPayables)}</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {providers.filter(p => getProviderBalance(p.id) > 0).map(p => {
+              const bal = getProviderBalance(p.id);
+              return (
+                <span key={p.id} className="px-3 py-1.5 bg-red-50 border border-red-100 text-red-700 text-xs font-medium rounded-full">
+                  {p.name}: {formatCurrency(bal)}
+                </span>
+              );
+            })}
           </div>
         </div>
       )}

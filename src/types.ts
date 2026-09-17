@@ -73,3 +73,14 @@ export interface BusinessConfig {
   nif: string;
   lastInvoiceNumber: number;
 }
+
+export interface Payable {
+  id: string;
+  providerId: string;
+  saleId?: string;
+  purchaseId?: string;
+  type: 'sale' | 'purchase' | 'payment';
+  amount: number;
+  description: string;
+  date: string;
+}
