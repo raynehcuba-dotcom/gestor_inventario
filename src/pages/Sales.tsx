@@ -21,8 +21,8 @@ export default function Sales() {
     return result;
   }, [sales, selectedDate]);
 
-  const handleSaleComplete = (sale: Sale) => {
-    saveSale(sale);
+  const handleSaleComplete = async (sale: Sale) => {
+    await saveSale(sale);
     setSales(getSales());
     setProducts(getProducts());
     setShowNewSale(false);
@@ -105,7 +105,7 @@ export default function Sales() {
   );
 }
 
-function NewSaleModal({ products, sellerId, onComplete, onClose }: { products: Product[]; sellerId: string; onComplete: (sale: Sale) => void; onClose: () => void }) {
+function NewSaleModal({ products, sellerId, onComplete, onClose }: { products: Product[]; sellerId: string; onComplete: (sale: Sale) => Promise<void>; onClose: () => void }) {
   const [items, setItems] = useState<SaleItem[]>([]);
   const [search, setSearch] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('Efectivo');

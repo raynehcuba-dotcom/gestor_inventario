@@ -44,15 +44,15 @@ export default function Inventory() {
     }
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     if (confirm('¿Eliminar este producto?')) {
-      deleteProduct(id);
+      await deleteProduct(id);
       setProducts(getProducts());
     }
   };
 
-  const handleSave = (product: Product) => {
-    saveProduct(product);
+  const handleSave = async (product: Product) => {
+    await saveProduct(product);
     setProducts(getProducts());
     setShowModal(false);
     setEditingProduct(null);

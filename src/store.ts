@@ -1,237 +1,269 @@
-import { User, Product, Provider, Purchase, Sale, BusinessConfig } from './types';
-import { v4 as uuidv4 } from 'uuid';
+import { User, Product, Provider, Purchase, Sale, BusinessConfig, SaleItem, PurchaseItem } from './types';
+import { run, getAll, getOne, persist, simpleHash } from './database';
 
-const KEYS = {
-  users: 'inv_users',
-  products: 'inv_products',
-  providers: 'inv_providers',
-  purchases: 'inv_purchases',
-  sales: 'inv_sales',
-  config: 'inv_config',
-  currentUser: 'inv_current_user',
-};
-
-// Simple hash function for passwords (not production-grade but works offline)
-function simpleHash(str: string): string {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash;
-  }
-  return hash.toString(36) + str.length.toString(36);
+function generateId(): string {
+  return crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).substr(2);
 }
 
-function get<T>(key: string, fallback: T): T {
-  try {
-    const data = localStorage.getItem(key);
-    return data ? JSON.parse(data) : fallback;
-  } catch {
-    return fallback;
-  }
-}
+// ============ AUTH ============
 
-function set<T>(key: string, data: T): void {
-  localStorage.setItem(key, JSON.stringify(data));
-}
-
-// Initialize default data
-export function initializeStore(): void {
-  const users = get<User[]>(KEYS.users, []);
-  if (users.length === 0) {
-    const defaultUsers: User[] = [
-      {
-        id: uuidv4(),
-        username: 'admin',
-        passwordHash: simpleHash('admin123'),
-        role: 'admin',
-        fullName: 'Administrador Principal',
-      },
-      {
-        id: uuidv4(),
-        username: 'vendedor',
-        passwordHash: simpleHash('vendedor123'),
-        role: 'vendedor',
-        fullName: 'Vendedor Demo',
-      },
-    ];
-    set(KEYS.users, defaultUsers);
-  }
-
-  const config = get<BusinessConfig | null>(KEYS.config, null);
-  if (!config) {
-    set(KEYS.config, {
-      name: 'MIPYME Demo',
-      address: 'La Habana, Cuba',
-      phone: '+53 5555 5555',
-      nif: 'MIP-000-000',
-      lastInvoiceNumber: 0,
-    });
-  }
-
-  // Add sample products if none exist
-  const products = get<Product[]>(KEYS.products, []);
-  if (products.length === 0) {
-    const providers = get<Provider[]>(KEYS.providers, []);
-    let providerId = '';
-    if (providers.length === 0) {
-      const defaultProviders: Provider[] = [
-        { id: uuidv4(), name: 'Proveedor General', contact: 'Juan Pérez', phone: '+53 5000 0001', email: 'proveedor@demo.cu', address: 'La Habana', createdAt: new Date().toISOString() },
-      ];
-      set(KEYS.providers, defaultProviders);
-      providerId = defaultProviders[0].id;
-    } else {
-      providerId = providers[0].id;
-    }
-
-    const sampleProducts: Product[] = [
-      { id: uuidv4(), code: 'P001', name: 'Arroz (5kg)', category: 'Alimentos', costPrice: 150, salePrice: 220, stock: 45, minStock: 10, providerId, createdAt: new Date().toISOString() },
-      { id: uuidv4(), code: 'P002', name: 'Aceite (1L)', category: 'Alimentos', costPrice: 80, salePrice: 130, stock: 30, minStock: 8, providerId, createdAt: new Date().toISOString() },
-      { id: uuidv4(), code: 'P003', name: 'Jabón de baño', category: 'Higiene', costPrice: 25, salePrice: 45, stock: 3, minStock: 15, providerId, createdAt: new Date().toISOString() },
-      { id: uuidv4(), code: 'P004', name: 'Detergente (1kg)', category: 'Higiene', costPrice: 40, salePrice: 70, stock: 0, minStock: 10, providerId, createdAt: new Date().toISOString() },
-      { id: uuidv4(), code: 'P005', name: 'Frijoles negros (1kg)', category: 'Alimentos', costPrice: 60, salePrice: 100, stock: 25, minStock: 5, providerId, createdAt: new Date().toISOString() },
-      { id: uuidv4(), code: 'P006', name: 'Pasta dental', category: 'Higiene', costPrice: 30, salePrice: 55, stock: 18, minStock: 5, providerId, createdAt: new Date().toISOString() },
-    ];
-    set(KEYS.products, sampleProducts);
-  }
-}
-
-// Auth
 export function authenticate(username: string, password: string): User | null {
-  const users = get<User[]>(KEYS.users, []);
   const hash = simpleHash(password);
-  return users.find(u => u.username === username && u.passwordHash === hash) || null;
+  const row = getOne<any>(
+    'SELECT id, username, password_hash, role, full_name FROM users WHERE username = ? AND password_hash = ?',
+    [username, hash]
+  );
+  if (!row) return null;
+  return {
+    id: row.id,
+    username: row.username,
+    passwordHash: row.password_hash,
+    role: row.role,
+    fullName: row.full_name,
+  };
 }
 
-export function getCurrentUser(): User | null {
-  return get<User | null>(KEYS.currentUser, null);
-}
+// ============ PRODUCTS ============
 
-export function setCurrentUser(user: User | null): void {
-  set(KEYS.currentUser, user);
-}
-
-// Products
 export function getProducts(): Product[] {
-  return get<Product[]>(KEYS.products, []);
+  const rows = getAll<any>(
+    'SELECT id, code, name, category, cost_price, sale_price, stock, min_stock, provider_id, created_at FROM products ORDER BY name'
+  );
+  return rows.map(r => ({
+    id: r.id,
+    code: r.code,
+    name: r.name,
+    category: r.category,
+    costPrice: r.cost_price,
+    salePrice: r.sale_price,
+    stock: r.stock,
+    minStock: r.min_stock,
+    providerId: r.provider_id || '',
+    createdAt: r.created_at,
+  }));
 }
 
-export function saveProduct(product: Product): void {
-  const products = getProducts();
-  const idx = products.findIndex(p => p.id === product.id);
-  if (idx >= 0) {
-    products[idx] = product;
+export async function saveProduct(product: Product): Promise<void> {
+  const existing = getOne<any>('SELECT id FROM products WHERE id = ?', [product.id]);
+  if (existing) {
+    run(`UPDATE products SET code=?, name=?, category=?, cost_price=?, sale_price=?, stock=?, min_stock=?, provider_id=? WHERE id=?`,
+      [product.code, product.name, product.category, product.costPrice, product.salePrice, product.stock, product.minStock, product.providerId, product.id]);
   } else {
-    products.push(product);
+    run(`INSERT INTO products (id, code, name, category, cost_price, sale_price, stock, min_stock, provider_id, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      [product.id, product.code, product.name, product.category, product.costPrice, product.salePrice, product.stock, product.minStock, product.providerId, product.createdAt]);
   }
-  set(KEYS.products, products);
+  await persist();
 }
 
-export function deleteProduct(id: string): void {
-  const products = getProducts().filter(p => p.id !== id);
-  set(KEYS.products, products);
+export async function deleteProduct(id: string): Promise<void> {
+  run('DELETE FROM products WHERE id = ?', [id]);
+  await persist();
 }
 
-// Providers
+// ============ PROVIDERS ============
+
 export function getProviders(): Provider[] {
-  return get<Provider[]>(KEYS.providers, []);
+  const rows = getAll<any>(
+    'SELECT id, name, contact, phone, email, address, created_at FROM providers ORDER BY name'
+  );
+  return rows.map(r => ({
+    id: r.id,
+    name: r.name,
+    contact: r.contact || '',
+    phone: r.phone || '',
+    email: r.email || '',
+    address: r.address || '',
+    createdAt: r.created_at,
+  }));
 }
 
-export function saveProvider(provider: Provider): void {
-  const providers = getProviders();
-  const idx = providers.findIndex(p => p.id === provider.id);
-  if (idx >= 0) {
-    providers[idx] = provider;
+export async function saveProvider(provider: Provider): Promise<void> {
+  const existing = getOne<any>('SELECT id FROM providers WHERE id = ?', [provider.id]);
+  if (existing) {
+    run(`UPDATE providers SET name=?, contact=?, phone=?, email=?, address=? WHERE id=?`,
+      [provider.name, provider.contact, provider.phone, provider.email, provider.address, provider.id]);
   } else {
-    providers.push(provider);
+    run(`INSERT INTO providers (id, name, contact, phone, email, address, created_at) VALUES (?,?,?,?,?,?,?)`,
+      [provider.id, provider.name, provider.contact, provider.phone, provider.email, provider.address, provider.createdAt]);
   }
-  set(KEYS.providers, providers);
+  await persist();
 }
 
-export function deleteProvider(id: string): void {
-  const providers = getProviders().filter(p => p.id !== id);
-  set(KEYS.providers, providers);
+export async function deleteProvider(id: string): Promise<void> {
+  run('DELETE FROM providers WHERE id = ?', [id]);
+  await persist();
 }
 
-// Purchases
+// ============ PURCHASES ============
+
 export function getPurchases(): Purchase[] {
-  return get<Purchase[]>(KEYS.purchases, []);
-}
-
-export function savePurchase(purchase: Purchase): void {
-  const purchases = getPurchases();
-  purchases.push(purchase);
-  set(KEYS.purchases, purchases);
-  
-  // Update stock
-  const products = getProducts();
-  purchase.items.forEach(item => {
-    const prod = products.find(p => p.id === item.productId);
-    if (prod) {
-      prod.stock += item.quantity;
-    }
+  const rows = getAll<any>('SELECT id, date, provider_id, total_cost, notes FROM purchases ORDER BY date DESC');
+  return rows.map(r => {
+    const items = getAll<any>('SELECT id, product_id, quantity, cost_price FROM purchase_items WHERE purchase_id = ?', [r.id]);
+    return {
+      id: r.id,
+      date: r.date,
+      providerId: r.provider_id || '',
+      totalCost: r.total_cost,
+      notes: r.notes || '',
+      items: items.map(i => ({
+        productId: i.product_id,
+        quantity: i.quantity,
+        costPrice: i.cost_price,
+      })),
+    };
   });
-  set(KEYS.products, products);
 }
 
-// Sales
+export async function savePurchase(purchase: Purchase): Promise<void> {
+  run(`INSERT INTO purchases (id, date, provider_id, total_cost, notes) VALUES (?,?,?,?,?)`,
+    [purchase.id, purchase.date, purchase.providerId, purchase.totalCost, purchase.notes]);
+
+  for (const item of purchase.items) {
+    const itemId = generateId();
+    run(`INSERT INTO purchase_items (id, purchase_id, product_id, quantity, cost_price) VALUES (?,?,?,?,?)`,
+      [itemId, purchase.id, item.productId, item.quantity, item.costPrice]);
+    
+    // Update stock
+    run('UPDATE products SET stock = stock + ? WHERE id = ?', [item.quantity, item.productId]);
+  }
+  await persist();
+}
+
+// ============ SALES ============
+
 export function getSales(): Sale[] {
-  return get<Sale[]>(KEYS.sales, []);
+  const rows = getAll<any>('SELECT id, invoice_number, date, seller_id, subtotal, total, payment_method, notes FROM sales ORDER BY date DESC');
+  return rows.map(r => {
+    const items = getAll<any>('SELECT id, product_id, product_name, quantity, unit_price, total FROM sale_items WHERE sale_id = ?', [r.id]);
+    return {
+      id: r.id,
+      invoiceNumber: r.invoice_number,
+      date: r.date,
+      sellerId: r.seller_id || '',
+      subtotal: r.subtotal,
+      total: r.total,
+      paymentMethod: r.payment_method || 'Efectivo',
+      notes: r.notes || '',
+      items: items.map(i => ({
+        productId: i.product_id,
+        productName: i.product_name,
+        quantity: i.quantity,
+        unitPrice: i.unit_price,
+        total: i.total,
+      })),
+    };
+  });
 }
 
-export function saveSale(sale: Sale): void {
-  const sales = getSales();
-  sales.push(sale);
-  set(KEYS.sales, sales);
-  
-  // Update stock
-  const products = getProducts();
-  sale.items.forEach(item => {
-    const prod = products.find(p => p.id === item.productId);
-    if (prod) {
-      prod.stock -= item.quantity;
-    }
-  });
-  set(KEYS.products, products);
-  
+export async function saveSale(sale: Sale): Promise<void> {
+  run(`INSERT INTO sales (id, invoice_number, date, seller_id, subtotal, total, payment_method, notes) VALUES (?,?,?,?,?,?,?,?)`,
+    [sale.id, sale.invoiceNumber, sale.date, sale.sellerId, sale.subtotal, sale.total, sale.paymentMethod, sale.notes]);
+
+  for (const item of sale.items) {
+    const itemId = generateId();
+    run(`INSERT INTO sale_items (id, sale_id, product_id, product_name, quantity, unit_price, total) VALUES (?,?,?,?,?,?,?)`,
+      [itemId, sale.id, item.productId, item.productName, item.quantity, item.unitPrice, item.total]);
+    
+    // Update stock
+    run('UPDATE products SET stock = stock - ? WHERE id = ?', [item.quantity, item.productId]);
+  }
+
   // Update invoice number
-  const config = get<BusinessConfig>(KEYS.config, {} as BusinessConfig);
-  config.lastInvoiceNumber = sale.invoiceNumber;
-  set(KEYS.config, config);
+  run(`UPDATE config SET value = ? WHERE key = 'last_invoice_number'`, [sale.invoiceNumber.toString()]);
+  
+  await persist();
 }
 
 export function getNextInvoiceNumber(): number {
-  const config = get<BusinessConfig>(KEYS.config, {} as BusinessConfig);
-  return (config.lastInvoiceNumber || 0) + 1;
+  const row = getOne<any>("SELECT value FROM config WHERE key = 'last_invoice_number'");
+  return (parseInt(row?.value || '0') || 0) + 1;
 }
 
-// Config
+// ============ CONFIG ============
+
 export function getConfig(): BusinessConfig {
-  return get<BusinessConfig>(KEYS.config, {
-    name: 'MIPYME Demo',
-    address: '',
-    phone: '',
-    nif: '',
-    lastInvoiceNumber: 0,
-  });
+  const rows = getAll<any>('SELECT key, value FROM config');
+  const map: Record<string, string> = {};
+  rows.forEach(r => { map[r.key] = r.value; });
+  
+  return {
+    name: map['business_name'] || 'MIPYME Demo',
+    address: map['business_address'] || '',
+    phone: map['business_phone'] || '',
+    nif: map['business_nif'] || '',
+    lastInvoiceNumber: parseInt(map['last_invoice_number'] || '0') || 0,
+  };
 }
 
-export function saveConfig(config: BusinessConfig): void {
-  set(KEYS.config, config);
-}
-
-// Users management (admin only)
-export function getUsers(): User[] {
-  return get<User[]>(KEYS.users, []);
-}
-
-export function saveUser(user: User): void {
-  const users = getUsers();
-  const idx = users.findIndex(u => u.id === user.id);
-  if (idx >= 0) {
-    users[idx] = { ...users[idx], ...user };
-  } else {
-    users.push({ ...user, passwordHash: simpleHash(user.passwordHash) });
+export async function saveConfig(config: BusinessConfig): Promise<void> {
+  const entries: [string, string][] = [
+    ['business_name', config.name],
+    ['business_address', config.address],
+    ['business_phone', config.phone],
+    ['business_nif', config.nif],
+    ['last_invoice_number', config.lastInvoiceNumber.toString()],
+  ];
+  for (const [key, value] of entries) {
+    run(`INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)`, [key, value]);
   }
-  set(KEYS.users, users);
+  await persist();
 }
+
+// ============ USERS ============
+
+export function getUsers(): User[] {
+  const rows = getAll<any>('SELECT id, username, password_hash, role, full_name FROM users');
+  return rows.map(r => ({
+    id: r.id,
+    username: r.username,
+    passwordHash: r.password_hash,
+    role: r.role,
+    fullName: r.full_name,
+  }));
+}
+
+export async function saveUser(user: User & { passwordHash?: string }): Promise<void> {
+  const existing = getOne<any>('SELECT id FROM users WHERE id = ?', [user.id]);
+  if (existing) {
+    if (user.passwordHash && user.passwordHash.length > 0 && !user.passwordHash.match(/^[a-z0-9]+$/)) {
+      // New password provided
+      const hash = simpleHash(user.passwordHash);
+      run(`UPDATE users SET username=?, password_hash=?, role=?, full_name=? WHERE id=?`,
+        [user.username, hash, user.role, user.fullName, user.id]);
+    } else {
+      run(`UPDATE users SET username=?, role=?, full_name=? WHERE id=?`,
+        [user.username, user.role, user.fullName, user.id]);
+    }
+  } else {
+    const hash = simpleHash(user.passwordHash || 'default');
+    run(`INSERT INTO users (id, username, password_hash, role, full_name) VALUES (?,?,?,?,?)`,
+      [user.id, user.username, hash, user.role, user.fullName]);
+  }
+  await persist();
+}
+
+// ============ SESSION (localStorage for current user only) ============
+
+const SESSION_KEY = 'inv_current_user';
+
+export function getCurrentUser(): User | null {
+  try {
+    const data = localStorage.getItem(SESSION_KEY);
+    return data ? JSON.parse(data) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function setCurrentUser(user: User | null): void {
+  if (user) {
+    localStorage.setItem(SESSION_KEY, JSON.stringify(user));
+  } else {
+    localStorage.removeItem(SESSION_KEY);
+  }
+}
+
+// ============ DB EXPORT/IMPORT ============
+
+export { exportDatabase, importDatabase } from './database';

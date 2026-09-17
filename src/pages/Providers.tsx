@@ -15,15 +15,15 @@ export default function Providers() {
     p.contact.toLowerCase().includes(search.toLowerCase())
   );
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     if (confirm('¿Eliminar este proveedor?')) {
-      deleteProvider(id);
+      await deleteProvider(id);
       setProviders(getProviders());
     }
   };
 
-  const handleSave = (provider: Provider) => {
-    saveProvider(provider);
+  const handleSave = async (provider: Provider) => {
+    await saveProvider(provider);
     setProviders(getProviders());
     setShowModal(false);
     setEditing(null);

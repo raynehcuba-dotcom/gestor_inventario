@@ -1,17 +1,18 @@
-import React, { useState } from 'react';
-import { getConfig, saveConfig, getUsers, saveUser } from '../store';
+import React, { useState, useRef } from 'react';
+import { getConfig, saveConfig, getUsers, saveUser, exportDatabase, importDatabase } from '../store';
 import { BusinessConfig, User } from '../types';
-import { Save, Users, Building2 } from 'lucide-react';
+import { Save, Users, Building2, Download, Upload, Database, HardDrive } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 
 export default function Settings() {
   const [config, setConfig] = useState<BusinessConfig>(getConfig());
   const [users, setUsers] = useState<User[]>(getUsers());
   const [saved, setSaved] = useState(false);
-  const [activeTab, setActiveTab] = useState<'business' | 'users'>('business');
+  const [activeTab, setActiveTab] = useState<'business' | 'users' | 'database'>('business');
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleSaveConfig = () => {
-    saveConfig(config);
+  const handleSaveConfig = async () => {
+    await saveConfig(config);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
@@ -27,18 +28,46 @@ export default function Settings() {
     setUsers([...users, newUser]);
   };
 
-  const handleSaveUsers = () => {
-    users.forEach(u => {
-      if (u.username) saveUser(u);
-    });
+  const handleSaveUsers = async () => {
+    for (const u of users) {
+      if (u.username) await saveUser(u);
+    }
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
+  };
+
+  const handleExportDb = () => {
+    const data = exportDatabase();
+    if (!data) return;
+    const blob = new Blob([data.buffer as ArrayBuffer], { type: 'application/x-sqlite3' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'inventario_mipyme.db';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportDb = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!confirm('¿Importar esta base de datos? Se reemplazarán todos los datos actuales.')) return;
+    
+    const buffer = await file.arrayBuffer();
+    await importDatabase(buffer);
+    setConfig(getConfig());
+    setUsers(getUsers());
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   return (
     <div className="space-y-6">
       {/* Tabs */}
-      <div className="flex gap-1 bg-gray-100 p-1 rounded-lg w-fit">
+      <div className="flex flex-wrap gap-1 bg-gray-100 p-1 rounded-lg w-fit">
         <button
           onClick={() => setActiveTab('business')}
           className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'business' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
@@ -52,6 +81,13 @@ export default function Settings() {
         >
           <Users className="w-4 h-4" />
           Usuarios
+        </button>
+        <button
+          onClick={() => setActiveTab('database')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'database' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+        >
+          <Database className="w-4 h-4" />
+          Base de datos
         </button>
       </div>
 
@@ -156,6 +192,77 @@ export default function Settings() {
             <Save className="w-4 h-4" />
             Guardar usuarios
           </button>
+        </div>
+      )}
+
+      {activeTab === 'database' && (
+        <div className="space-y-6">
+          <div className="bg-white rounded-xl border border-gray-200 p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center">
+                <HardDrive className="w-5 h-5 text-blue-600" />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-gray-800">Base de datos SQLite</h3>
+                <p className="text-sm text-gray-500">Archivo: inventario_mipyme.db</p>
+              </div>
+            </div>
+            <p className="text-sm text-gray-600 mb-4">
+              La base de datos se almacena localmente en el navegador usando OPFS (Origin Private File System). 
+              Cada cambio se guarda automáticamente en el archivo <code className="px-1.5 py-0.5 bg-gray-100 rounded text-xs font-mono">inventario_mipyme.db</code>.
+              Puede exportar una copia de seguridad o restaurar desde un archivo.
+            </p>
+            <div className="bg-blue-50 border border-blue-100 rounded-lg p-4 mb-6">
+              <p className="text-sm text-blue-800">
+                <strong>⚡ Persistencia automática:</strong> Cada operación (crear, editar, eliminar) guarda los cambios inmediatamente en la base de datos local.
+                No se pierde información al cerrar el navegador.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <button
+                onClick={handleExportDb}
+                className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 text-white font-medium rounded-lg hover:bg-emerald-700 text-sm"
+              >
+                <Download className="w-4 h-4" />
+                Descargar .db (backup)
+              </button>
+              <label className="flex items-center gap-2 px-5 py-2.5 bg-amber-600 text-white font-medium rounded-lg hover:bg-amber-700 text-sm cursor-pointer">
+                <Upload className="w-4 h-4" />
+                Restaurar desde .db
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".db,.sqlite,.sqlite3"
+                  onChange={handleImportDb}
+                  className="hidden"
+                />
+              </label>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-xl border border-gray-200 p-6">
+            <h3 className="text-sm font-semibold text-gray-800 mb-3">Estructura de la base de datos</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {[
+                { table: 'users', desc: 'Usuarios del sistema' },
+                { table: 'products', desc: 'Catálogo de productos' },
+                { table: 'providers', desc: 'Proveedores' },
+                { table: 'purchases', desc: 'Compras/entradas' },
+                { table: 'purchase_items', desc: 'Items de compra' },
+                { table: 'sales', desc: 'Ventas registradas' },
+                { table: 'sale_items', desc: 'Items de venta' },
+                { table: 'config', desc: 'Configuración del negocio' },
+              ].map(t => (
+                <div key={t.table} className="flex items-center gap-2 p-2 bg-gray-50 rounded-lg">
+                  <Database className="w-3.5 h-3.5 text-gray-400" />
+                  <div>
+                    <p className="text-xs font-mono font-medium text-gray-700">{t.table}</p>
+                    <p className="text-xs text-gray-500">{t.desc}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       )}
     </div>

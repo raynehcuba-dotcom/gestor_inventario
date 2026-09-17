@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { 
   LayoutDashboard, Package, ShoppingCart, Users, FileText, 
-  Settings, LogOut, Menu, X, ChevronDown
+  Settings, LogOut, Menu, X, ChevronDown, Database, CheckCircle2
 } from 'lucide-react';
 
 interface LayoutProps {
@@ -100,10 +100,14 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
           <h1 className="text-lg font-semibold text-gray-800 capitalize">
             {navItems.find(n => n.id === currentPage)?.label || 'Dashboard'}
           </h1>
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-gray-500 hidden sm:block">
+          <div className="flex items-center gap-3">
+            <span className="text-sm text-gray-500 hidden md:block">
               {new Date().toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
             </span>
+            <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-emerald-50 border border-emerald-100 rounded-full" title="Base de datos SQLite local activa">
+              <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
+              <span className="text-xs font-medium text-emerald-700 hidden sm:inline">BD activa</span>
+            </div>
           </div>
         </header>
 
