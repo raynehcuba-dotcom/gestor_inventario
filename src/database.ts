@@ -25,6 +25,7 @@ export async function initDatabase(): Promise<void> {
   
   if (existingData) {
     db = new SQL.Database(existingData);
+    migrateDatabase();
   } else {
     db = new SQL.Database();
     createTables();
@@ -33,6 +34,31 @@ export async function initDatabase(): Promise<void> {
   }
 
   initialized = true;
+}
+
+// Migrate existing databases
+function migrateDatabase(): void {
+  if (!db) return;
+  
+  // Add payables table if not exists
+  const tables = getAll<{ name: string }>("SELECT name FROM sqlite_master WHERE type='table' AND name='payables'");
+  if (tables.length === 0) {
+    db.run(`
+      CREATE TABLE payables (
+        id TEXT PRIMARY KEY,
+        provider_id TEXT NOT NULL,
+        sale_id TEXT,
+        purchase_id TEXT,
+        type TEXT NOT NULL CHECK(type IN ('sale', 'purchase', 'payment')),
+        amount REAL NOT NULL,
+        description TEXT,
+        date TEXT NOT NULL,
+        FOREIGN KEY (provider_id) REFERENCES providers(id),
+        FOREIGN KEY (sale_id) REFERENCES sales(id),
+        FOREIGN KEY (purchase_id) REFERENCES purchases(id)
+      )
+    `);
+  }
 }
 
 // Create all tables
@@ -118,6 +144,20 @@ function createTables(): void {
     CREATE TABLE IF NOT EXISTS config (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS payables (
+      id TEXT PRIMARY KEY,
+      provider_id TEXT NOT NULL,
+      sale_id TEXT,
+      purchase_id TEXT,
+      type TEXT NOT NULL CHECK(type IN ('sale', 'purchase', 'payment')),
+      amount REAL NOT NULL,
+      description TEXT,
+      date TEXT NOT NULL,
+      FOREIGN KEY (provider_id) REFERENCES providers(id),
+      FOREIGN KEY (sale_id) REFERENCES sales(id),
+      FOREIGN KEY (purchase_id) REFERENCES purchases(id)
     );
   `);
 }
