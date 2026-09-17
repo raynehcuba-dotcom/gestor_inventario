@@ -1,6 +1,5 @@
 import initSqlJs from 'sql.js';
 import type { Database } from 'sql.js';
-import sqlWasm from 'sql.js/dist/sql-wasm.wasm?url';
 
 let db: Database | null = null;
 let initialized = false;
@@ -12,7 +11,10 @@ export async function initDatabase(): Promise<void> {
 
   const SQL = await initSqlJs({
     locateFile: (file: string) => {
-      if (file.endsWith('.wasm')) return sqlWasm;
+      if (file.endsWith('.wasm')) {
+        // Use CDN for WASM file (fallback for offline: file should be in /public)
+        return 'https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/sql-wasm.wasm';
+      }
       return file;
     }
   });
@@ -216,7 +218,9 @@ export function exportDatabase(): Uint8Array | null {
 export async function importDatabase(buffer: ArrayBuffer): Promise<void> {
   const SQL = await initSqlJs({
     locateFile: (file: string) => {
-      if (file.endsWith('.wasm')) return sqlWasm;
+      if (file.endsWith('.wasm')) {
+        return 'https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/sql-wasm.wasm';
+      }
       return file;
     }
   });
