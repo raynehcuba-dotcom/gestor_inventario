@@ -1,20 +1,23 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { Product, Provider } from '../types';
-import { getProducts, saveProduct, deleteProduct, getProviders } from '../store';
+import { getProducts, saveProduct, deleteProduct, getProviders, getSales } from '../store';
 import { useAuth } from '../context/AuthContext';
-import { Plus, Search, Edit2, Trash2, AlertTriangle, X, ArrowUpDown } from 'lucide-react';
+import { Plus, Search, Edit2, Trash2, AlertTriangle, X, ArrowUpDown, Package, Calendar, TrendingUp, MapPin, BarChart3 } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 
 export default function Inventory() {
   const { isAdmin } = useAuth();
   const [products, setProducts] = useState<Product[]>(getProducts());
   const providers = getProviders();
+  const sales = getSales();
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
   const [sortField, setSortField] = useState<keyof Product>('name');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [showModal, setShowModal] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [hoveredProduct, setHoveredProduct] = useState<Product | null>(null);
+  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
   const categories = useMemo(() => [...new Set(products.map(p => p.category))], [products]);
 
@@ -58,12 +61,38 @@ export default function Inventory() {
     setEditingProduct(null);
   };
 
+  const handleRowHover = (product: Product, e: React.MouseEvent) => {
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    setTooltipPos({ x: rect.right + 10, y: rect.top });
+    setHoveredProduct(product);
+  };
+
+  const handleRowLeave = () => {
+    setHoveredProduct(null);
+  };
+
   const getProviderName = (id: string) => providers.find(p => p.id === id)?.name || 'Sin proveedor';
 
   const getStockStatus = (product: Product) => {
     if (product.stock === 0) return 'out';
     if (product.stock <= product.minStock) return 'low';
     return 'ok';
+  };
+
+  // Calculate product stats for estiba card
+  const getProductStats = (product: Product) => {
+    const productSales = sales.filter(s => s.items.some(i => i.productId === product.id));
+    const totalSold = productSales.reduce((sum, s) => {
+      const item = s.items.find(i => i.productId === product.id);
+      return sum + (item?.quantity || 0);
+    }, 0);
+    const totalRevenue = productSales.reduce((sum, s) => {
+      const item = s.items.find(i => i.productId === product.id);
+      return sum + (item?.total || 0);
+    }, 0);
+    const margin = product.salePrice > 0 ? ((product.salePrice - product.costPrice) / product.salePrice) * 100 : 0;
+    const inventoryValue = product.stock * product.costPrice;
+    return { totalSold, totalRevenue, margin, inventoryValue, salesCount: productSales.length };
   };
 
   return (
@@ -130,7 +159,12 @@ export default function Inventory() {
               {filtered.map(product => {
                 const status = getStockStatus(product);
                 return (
-                  <tr key={product.id} className={`${status === 'out' ? 'bg-red-50' : status === 'low' ? 'bg-amber-50' : ''} hover:bg-gray-50`}>
+                  <tr 
+                    key={product.id} 
+                    className={`${status === 'out' ? 'bg-red-50' : status === 'low' ? 'bg-amber-50' : ''} hover:bg-gray-50 cursor-pointer transition-colors`}
+                    onMouseEnter={(e) => handleRowHover(product, e)}
+                    onMouseLeave={handleRowLeave}
+                  >
                     <td className="px-4 py-3 font-mono text-xs text-gray-600">{product.code}</td>
                     <td className="px-4 py-3 font-medium text-gray-800">
                       {product.name}
@@ -150,10 +184,10 @@ export default function Inventory() {
                     {isAdmin && (
                       <td className="px-4 py-3 text-right">
                         <div className="flex items-center justify-end gap-1">
-                          <button onClick={() => { setEditingProduct(product); setShowModal(true); }} className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded">
+                          <button onClick={(e) => { e.stopPropagation(); setEditingProduct(product); setShowModal(true); }} className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded">
                             <Edit2 className="w-4 h-4" />
                           </button>
-                          <button onClick={() => handleDelete(product.id)} className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded">
+                          <button onClick={(e) => { e.stopPropagation(); handleDelete(product.id); }} className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded">
                             <Trash2 className="w-4 h-4" />
                           </button>
                         </div>
@@ -170,6 +204,11 @@ export default function Inventory() {
         </div>
       </div>
 
+      {/* Tooltip - Tarjeta de Estiba */}
+      {hoveredProduct && (
+        <EstibaTooltip product={hoveredProduct} position={tooltipPos} providers={providers} stats={getProductStats(hoveredProduct)} />
+      )}
+
       {/* Modal */}
       {showModal && (
         <ProductModal
@@ -179,6 +218,121 @@ export default function Inventory() {
           onClose={() => { setShowModal(false); setEditingProduct(null); }}
         />
       )}
+    </div>
+  );
+}
+
+// Tarjeta de Estiba Tooltip
+function EstibaTooltip({ product, position, providers, stats }: { 
+  product: Product; 
+  position: { x: number; y: number }; 
+  providers: Provider[];
+  stats: { totalSold: number; totalRevenue: number; margin: number; inventoryValue: number; salesCount: number };
+}) {
+  const provider = providers.find(p => p.id === product.providerId);
+  
+  // Adjust position to stay within viewport
+  const adjustedX = Math.min(position.x, window.innerWidth - 340);
+  const adjustedY = Math.min(position.y, window.innerHeight - 480);
+
+  return (
+    <div 
+      className="fixed z-[100] pointer-events-none"
+      style={{ left: adjustedX, top: adjustedY }}
+    >
+      <div className="w-80 bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden">
+        {/* Header */}
+        <div className="bg-gradient-to-r from-blue-600 to-blue-700 p-4 text-white">
+          <div className="flex items-start justify-between">
+            <div>
+              <p className="text-xs font-mono opacity-80 mb-1">{product.code}</p>
+              <h3 className="text-base font-bold leading-tight">{product.name}</h3>
+              <p className="text-xs opacity-80 mt-1">{product.category}</p>
+            </div>
+            <div className="w-10 h-10 bg-white/20 rounded-lg flex items-center justify-center">
+              <Package className="w-5 h-5" />
+            </div>
+          </div>
+        </div>
+
+        {/* Body */}
+        <div className="p-4 space-y-3">
+          {/* Stock info */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="bg-gray-50 rounded-lg p-2.5">
+              <p className="text-xs text-gray-500 mb-0.5">Stock actual</p>
+              <p className={`text-lg font-bold ${product.stock === 0 ? 'text-red-600' : product.stock <= product.minStock ? 'text-amber-600' : 'text-gray-800'}`}>
+                {product.stock} uds
+              </p>
+            </div>
+            <div className="bg-gray-50 rounded-lg p-2.5">
+              <p className="text-xs text-gray-500 mb-0.5">Stock mínimo</p>
+              <p className="text-lg font-bold text-gray-800">{product.minStock} uds</p>
+            </div>
+          </div>
+
+          {/* Prices */}
+          <div className="grid grid-cols-3 gap-2">
+            <div className="text-center p-2 bg-blue-50 rounded-lg">
+              <p className="text-xs text-gray-500">Costo</p>
+              <p className="text-sm font-bold text-blue-700">${product.costPrice.toFixed(2)}</p>
+            </div>
+            <div className="text-center p-2 bg-emerald-50 rounded-lg">
+              <p className="text-xs text-gray-500">Venta</p>
+              <p className="text-sm font-bold text-emerald-700">${product.salePrice.toFixed(2)}</p>
+            </div>
+            <div className="text-center p-2 bg-purple-50 rounded-lg">
+              <p className="text-xs text-gray-500">Margen</p>
+              <p className="text-sm font-bold text-purple-700">{stats.margin.toFixed(1)}%</p>
+            </div>
+          </div>
+
+          {/* Provider */}
+          {provider && (
+            <div className="flex items-center gap-2 p-2 bg-gray-50 rounded-lg">
+              <MapPin className="w-4 h-4 text-gray-400 flex-shrink-0" />
+              <div className="min-w-0">
+                <p className="text-xs text-gray-500">Proveedor</p>
+                <p className="text-sm font-medium text-gray-800 truncate">{provider.name}</p>
+              </div>
+            </div>
+          )}
+
+          {/* Sales stats */}
+          <div className="border-t border-gray-100 pt-3">
+            <p className="text-xs font-medium text-gray-500 uppercase mb-2 flex items-center gap-1">
+              <BarChart3 className="w-3 h-3" />
+              Historial de ventas
+            </p>
+            <div className="grid grid-cols-3 gap-2">
+              <div className="text-center">
+                <p className="text-lg font-bold text-gray-800">{stats.totalSold}</p>
+                <p className="text-xs text-gray-500">Unidades</p>
+              </div>
+              <div className="text-center">
+                <p className="text-lg font-bold text-gray-800">{stats.salesCount}</p>
+                <p className="text-xs text-gray-500">Transacc.</p>
+              </div>
+              <div className="text-center">
+                <p className="text-lg font-bold text-emerald-600">${stats.totalRevenue.toFixed(0)}</p>
+                <p className="text-xs text-gray-500">Ingresos</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Inventory value */}
+          <div className="flex items-center justify-between p-2 bg-amber-50 rounded-lg border border-amber-100">
+            <span className="text-xs font-medium text-amber-700">Valor en inventario</span>
+            <span className="text-sm font-bold text-amber-800">${stats.inventoryValue.toFixed(2)}</span>
+          </div>
+
+          {/* Date */}
+          <div className="flex items-center gap-1.5 text-xs text-gray-400">
+            <Calendar className="w-3 h-3" />
+            Registrado: {new Date(product.createdAt).toLocaleDateString('es-ES')}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

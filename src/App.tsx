@@ -6,6 +6,7 @@ import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Inventory from './pages/Inventory';
 import Sales from './pages/Sales';
+import Reception from './pages/Reception';
 import Providers from './pages/Providers';
 import Reports from './pages/Reports';
 import Settings from './pages/Settings';
@@ -23,6 +24,7 @@ function AppContent() {
       case 'dashboard': return <Dashboard />;
       case 'inventory': return <Inventory />;
       case 'sales': return <Sales />;
+      case 'reception': return <Reception />;
       case 'providers': return <Providers />;
       case 'reports': return <Reports />;
       case 'settings': return <Settings />;

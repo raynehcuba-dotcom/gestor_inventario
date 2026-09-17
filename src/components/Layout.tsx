@@ -18,6 +18,7 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, roles: ['admin', 'vendedor'] },
     { id: 'sales', label: 'Ventas', icon: ShoppingCart, roles: ['admin', 'vendedor'] },
+    { id: 'reception', label: 'Recepción', icon: Package, roles: ['admin'] },
     { id: 'inventory', label: 'Inventario', icon: Package, roles: ['admin', 'vendedor'] },
     { id: 'providers', label: 'Proveedores', icon: Users, roles: ['admin'] },
     { id: 'reports', label: 'Reportes', icon: FileText, roles: ['admin'] },
