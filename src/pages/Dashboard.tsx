@@ -1,3 +1,4 @@
+/** @jsx React.createElement */
 import React, { useMemo } from 'react';
 import { getProducts, getSales, getConfig, getProviders, getProviderBalance } from '../store';
 import { useAuth } from '../context/AuthContext';
