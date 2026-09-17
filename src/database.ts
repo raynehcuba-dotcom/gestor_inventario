@@ -13,6 +13,7 @@ export async function initDatabase(): Promise<void> {
   const SQL = await initSqlJs({
     locateFile: (file: string) => {
       if (file.endsWith('.wasm')) {
+        // sqlWasmUrl already includes the base path from Vite config
         return sqlWasmUrl;
       }
       return file;
@@ -219,6 +220,7 @@ export async function importDatabase(buffer: ArrayBuffer): Promise<void> {
   const SQL = await initSqlJs({
     locateFile: (file: string) => {
       if (file.endsWith('.wasm')) {
+        // sqlWasmUrl already includes the base path from Vite config
         return sqlWasmUrl;
       }
       return file;
