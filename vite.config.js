@@ -2,9 +2,8 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
-export default defineConfig({
-  base: '/gestor_inventario/',
-  base: '/gestor_inventario/', // ← Esta es la única línea que importa agregar
+export default defineConfig(({ command }) => ({
+  base: command === 'build' ? '/gestor_inventario/' : '/',
   plugins: [react(), tailwindcss()],
   server: {
     host: "0.0.0.0",
@@ -14,4 +13,4 @@ export default defineConfig({
       port: 3000,
     },
   },
-});
+}));
