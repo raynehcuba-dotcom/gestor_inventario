@@ -1,6 +1,10 @@
 import React from 'react';
+import ReactDOM from 'react-dom/client';
 import PanelCaja from './previews/PanelCaja';
+import './index.css';
 
-export default function AppPreview() {
-  return <PanelCaja />;
-}
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
+    <PanelCaja />
+  </React.StrictMode>
+);
