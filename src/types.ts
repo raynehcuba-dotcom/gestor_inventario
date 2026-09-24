@@ -84,3 +84,25 @@ export interface Payable {
   description: string;
   date: string;
 }
+
+export interface WeeklyClosing {
+  id: string;
+  weekStart: string;
+  weekEnd: string;
+  efectivoReal: number;
+  transferenciasTotal: number;
+  transferenciasEmelyh: number;
+  transferenciasGaibe: number;
+  aPagarEfectivoProveedores: number;
+  aPagarTransferenciasProveedores: number;
+  aCobrarDineroEfectivo: number;
+  proveedorEfectivo: number;
+  diferenciaSemana: number;
+  gananciaSemana: number;
+  resto: number;
+  restoMasGanancias: number;
+  totalEfectivoEntreDos: number;
+  aCobrarEnTransferencia: number;
+  notes: string;
+  createdAt: string;
+}

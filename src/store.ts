@@ -341,6 +341,102 @@ export function getProviderBalance(providerId: string): number {
   return balance;
 }
 
+// ============ WEEKLY CLOSINGS (Cuadre Semanal) ============
+
+export function getWeeklyClosings(): import('./types').WeeklyClosing[] {
+  const rows = getAll<any>(
+    'SELECT * FROM weekly_closings ORDER BY week_start DESC'
+  );
+  return rows.map(r => ({
+    id: r.id,
+    weekStart: r.week_start,
+    weekEnd: r.week_end,
+    efectivoReal: r.efectivo_real,
+    transferenciasTotal: r.transferencias_total,
+    transferenciasEmelyh: r.transferencias_emelyh,
+    transferenciasGaibe: r.transferencias_gaibe,
+    aPagarEfectivoProveedores: r.a_pagar_efectivo_proveedores,
+    aPagarTransferenciasProveedores: r.a_pagar_transferencias_proveedores,
+    aCobrarDineroEfectivo: r.a_cobrar_dinero_efectivo,
+    proveedorEfectivo: r.proveedor_efectivo,
+    diferenciaSemana: r.diferencia_semana,
+    gananciaSemana: r.ganancia_semana,
+    resto: r.resto,
+    restoMasGanancias: r.resto_mas_ganancias,
+    totalEfectivoEntreDos: r.total_efectivo_entre_dos,
+    aCobrarEnTransferencia: r.a_cobrar_en_transferencia,
+    notes: r.notes || '',
+    createdAt: r.created_at,
+  }));
+}
+
+export function getWeeklyClosingById(id: string): import('./types').WeeklyClosing | null {
+  const row = getOne<any>('SELECT * FROM weekly_closings WHERE id = ?', [id]);
+  if (!row) return null;
+  return {
+    id: row.id,
+    weekStart: row.week_start,
+    weekEnd: row.week_end,
+    efectivoReal: row.efectivo_real,
+    transferenciasTotal: row.transferencias_total,
+    transferenciasEmelyh: row.transferencias_emelyh,
+    transferenciasGaibe: row.transferencias_gaibe,
+    aPagarEfectivoProveedores: row.a_pagar_efectivo_proveedores,
+    aPagarTransferenciasProveedores: row.a_pagar_transferencias_proveedores,
+    aCobrarDineroEfectivo: row.a_cobrar_dinero_efectivo,
+    proveedorEfectivo: row.proveedor_efectivo,
+    diferenciaSemana: row.diferencia_semana,
+    gananciaSemana: row.ganancia_semana,
+    resto: row.resto,
+    restoMasGanancias: row.resto_mas_ganancias,
+    totalEfectivoEntreDos: row.total_efectivo_entre_dos,
+    aCobrarEnTransferencia: row.a_cobrar_en_transferencia,
+    notes: row.notes || '',
+    createdAt: row.created_at,
+  };
+}
+
+export async function saveWeeklyClosing(closing: import('./types').WeeklyClosing): Promise<void> {
+  const existing = getOne<any>('SELECT id FROM weekly_closings WHERE id = ?', [closing.id]);
+  if (existing) {
+    run(`UPDATE weekly_closings SET 
+      week_start=?, week_end=?, efectivo_real=?, transferencias_total=?, 
+      transferencias_emelyh=?, transferencias_gaibe=?, 
+      a_pagar_efectivo_proveedores=?, a_pagar_transferencias_proveedores=?,
+      a_cobrar_dinero_efectivo=?, proveedor_efectivo=?,
+      diferencia_semana=?, ganancia_semana=?, resto=?, resto_mas_ganancias=?,
+      total_efectivo_entre_dos=?, a_cobrar_en_transferencia=?, notes=?
+      WHERE id=?`,
+      [closing.weekStart, closing.weekEnd, closing.efectivoReal, closing.transferenciasTotal,
+       closing.transferenciasEmelyh, closing.transferenciasGaibe,
+       closing.aPagarEfectivoProveedores, closing.aPagarTransferenciasProveedores,
+       closing.aCobrarDineroEfectivo, closing.proveedorEfectivo,
+       closing.diferenciaSemana, closing.gananciaSemana, closing.resto, closing.restoMasGanancias,
+       closing.totalEfectivoEntreDos, closing.aCobrarEnTransferencia, closing.notes, closing.id]);
+  } else {
+    run(`INSERT INTO weekly_closings (
+      id, week_start, week_end, efectivo_real, transferencias_total,
+      transferencias_emelyh, transferencias_gaibe,
+      a_pagar_efectivo_proveedores, a_pagar_transferencias_proveedores,
+      a_cobrar_dinero_efectivo, proveedor_efectivo,
+      diferencia_semana, ganancia_semana, resto, resto_mas_ganancias,
+      total_efectivo_entre_dos, a_cobrar_en_transferencia, notes, created_at
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [closing.id, closing.weekStart, closing.weekEnd, closing.efectivoReal, closing.transferenciasTotal,
+       closing.transferenciasEmelyh, closing.transferenciasGaibe,
+       closing.aPagarEfectivoProveedores, closing.aPagarTransferenciasProveedores,
+       closing.aCobrarDineroEfectivo, closing.proveedorEfectivo,
+       closing.diferenciaSemana, closing.gananciaSemana, closing.resto, closing.restoMasGanancias,
+       closing.totalEfectivoEntreDos, closing.aCobrarEnTransferencia, closing.notes, closing.createdAt]);
+  }
+  await persist();
+}
+
+export async function deleteWeeklyClosing(id: string): Promise<void> {
+  run('DELETE FROM weekly_closings WHERE id = ?', [id]);
+  await persist();
+}
+
 // ============ DB EXPORT/IMPORT ============
 
 export { exportDatabase, importDatabase } from './database';

@@ -59,6 +59,34 @@ function migrateDatabase(): void {
       )
     `);
   }
+
+  // Add weekly_closings table if not exists
+  const weeklyTables = getAll<{ name: string }>("SELECT name FROM sqlite_master WHERE type='table' AND name='weekly_closings'");
+  if (weeklyTables.length === 0) {
+    db.run(`
+      CREATE TABLE weekly_closings (
+        id TEXT PRIMARY KEY,
+        week_start TEXT NOT NULL,
+        week_end TEXT NOT NULL,
+        efectivo_real REAL NOT NULL DEFAULT 0,
+        transferencias_total REAL NOT NULL DEFAULT 0,
+        transferencias_emelyh REAL NOT NULL DEFAULT 0,
+        transferencias_gaibe REAL NOT NULL DEFAULT 0,
+        a_pagar_efectivo_proveedores REAL NOT NULL DEFAULT 0,
+        a_pagar_transferencias_proveedores REAL NOT NULL DEFAULT 0,
+        a_cobrar_dinero_efectivo REAL NOT NULL DEFAULT 0,
+        proveedor_efectivo REAL NOT NULL DEFAULT 0,
+        diferencia_semana REAL NOT NULL DEFAULT 0,
+        ganancia_semana REAL NOT NULL DEFAULT 0,
+        resto REAL NOT NULL DEFAULT 0,
+        resto_mas_ganancias REAL NOT NULL DEFAULT 0,
+        total_efectivo_entre_dos REAL NOT NULL DEFAULT 0,
+        a_cobrar_en_transferencia REAL NOT NULL DEFAULT 0,
+        notes TEXT DEFAULT '',
+        created_at TEXT NOT NULL
+      )
+    `);
+  }
 }
 
 // Create all tables
@@ -158,6 +186,28 @@ function createTables(): void {
       FOREIGN KEY (provider_id) REFERENCES providers(id),
       FOREIGN KEY (sale_id) REFERENCES sales(id),
       FOREIGN KEY (purchase_id) REFERENCES purchases(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS weekly_closings (
+      id TEXT PRIMARY KEY,
+      week_start TEXT NOT NULL,
+      week_end TEXT NOT NULL,
+      efectivo_real REAL NOT NULL DEFAULT 0,
+      transferencias_total REAL NOT NULL DEFAULT 0,
+      transferencias_emelyh REAL NOT NULL DEFAULT 0,
+      transferencias_gaibe REAL NOT NULL DEFAULT 0,
+      a_pagar_efectivo_proveedores REAL NOT NULL DEFAULT 0,
+      a_pagar_transferencias_proveedores REAL NOT NULL DEFAULT 0,
+      a_cobrar_dinero_efectivo REAL NOT NULL DEFAULT 0,
+      proveedor_efectivo REAL NOT NULL DEFAULT 0,
+      diferencia_semana REAL NOT NULL DEFAULT 0,
+      ganancia_semana REAL NOT NULL DEFAULT 0,
+      resto REAL NOT NULL DEFAULT 0,
+      resto_mas_ganancias REAL NOT NULL DEFAULT 0,
+      total_efectivo_entre_dos REAL NOT NULL DEFAULT 0,
+      a_cobrar_en_transferencia REAL NOT NULL DEFAULT 0,
+      notes TEXT DEFAULT '',
+      created_at TEXT NOT NULL
     );
   `);
 }
