@@ -10,6 +10,7 @@ import Reception from './pages/Reception';
 import Providers from './pages/Providers';
 import Reports from './pages/Reports';
 import Settings from './pages/Settings';
+import WeeklyClosingPage from './pages/WeeklyClosing';
 
 function AppContent() {
   const { user } = useAuth();
@@ -27,6 +28,7 @@ function AppContent() {
       case 'reception': return <Reception />;
       case 'providers': return <Providers />;
       case 'reports': return <Reports />;
+      case 'weekly-closing': return <WeeklyClosingPage />;
       case 'settings': return <Settings />;
       default: return <Dashboard />;
     }

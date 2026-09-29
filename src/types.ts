@@ -84,3 +84,35 @@ export interface Payable {
   description: string;
   date: string;
 }
+
+export interface WeeklyClosingMetrics {
+  salesCash: number;
+  salesTransfers: number;
+  providerCosts: number;
+  weekProfit: number;
+  emelyhProfit: number;
+  gaibelisProfit: number;
+}
+
+export interface WeeklyClosing extends WeeklyClosingMetrics {
+  id: string;
+  startDate: string;
+  endDate: string;
+  createdBy: string;
+  updatedBy: string;
+  createdAt: string;
+  updatedAt: string;
+  creatorName: string;
+  updaterName: string;
+}
+
+export interface WeeklyClosingAuditEntry {
+  id: string;
+  closingId: string;
+  actorId: string;
+  actorName: string;
+  action: 'created' | 'updated';
+  beforeSnapshot: Partial<WeeklyClosing> | null;
+  afterSnapshot: Partial<WeeklyClosing>;
+  createdAt: string;
+}

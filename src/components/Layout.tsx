@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { 
   LayoutDashboard, Package, ShoppingCart, Users, FileText, 
-  Settings, LogOut, Menu, X, ChevronDown, Database, CheckCircle2
+  Settings, LogOut, Menu, X, Database, Calculator
 } from 'lucide-react';
 
 interface LayoutProps {
@@ -22,6 +22,7 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
     { id: 'inventory', label: 'Inventario', icon: Package, roles: ['admin', 'vendedor'] },
     { id: 'providers', label: 'Proveedores', icon: Users, roles: ['admin'] },
     { id: 'reports', label: 'Reportes', icon: FileText, roles: ['admin'] },
+    { id: 'weekly-closing', label: 'Cuadre Semanal', icon: Calculator, roles: ['admin'] },
     { id: 'settings', label: 'Configuración', icon: Settings, roles: ['admin'] },
   ];
 

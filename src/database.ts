@@ -59,6 +59,20 @@ function migrateDatabase(): void {
       )
     `);
   }
+
+  const saleItemColumns = getAll<{ name: string }>('PRAGMA table_info(sale_items)');
+  if (saleItemColumns.length && !saleItemColumns.some(column => column.name === 'cost_price')) {
+    db.run('ALTER TABLE sale_items ADD COLUMN cost_price REAL NOT NULL DEFAULT 0');
+    db.run(`
+      UPDATE sale_items
+      SET cost_price = COALESCE(
+        (SELECT cost_price FROM products WHERE products.id = sale_items.product_id),
+        0
+      )
+    `);
+  }
+
+  createWeeklyClosingTables();
 }
 
 // Create all tables
@@ -137,6 +151,7 @@ function createTables(): void {
       quantity INTEGER NOT NULL,
       unit_price REAL NOT NULL,
       total REAL NOT NULL,
+      cost_price REAL NOT NULL DEFAULT 0,
       FOREIGN KEY (sale_id) REFERENCES sales(id),
       FOREIGN KEY (product_id) REFERENCES products(id)
     );
@@ -160,6 +175,122 @@ function createTables(): void {
       FOREIGN KEY (purchase_id) REFERENCES purchases(id)
     );
   `);
+
+  createWeeklyClosingTables();
+}
+
+function createWeeklyClosingTables(): void {
+  if (!db) return;
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS weekly_closings (
+      id TEXT PRIMARY KEY,
+      start_date TEXT NOT NULL,
+      end_date TEXT NOT NULL,
+      sales_cash REAL NOT NULL DEFAULT 0,
+      sales_transfers REAL NOT NULL DEFAULT 0,
+      provider_costs REAL NOT NULL DEFAULT 0,
+      week_profit REAL NOT NULL,
+      emelyh_profit REAL NOT NULL DEFAULT 0,
+      gaibelis_profit REAL NOT NULL DEFAULT 0,
+      created_by TEXT NOT NULL,
+      updated_by TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE(start_date, end_date),
+      CHECK(end_date >= start_date)
+    );
+
+    CREATE TABLE IF NOT EXISTS weekly_closing_audit (
+      id TEXT PRIMARY KEY,
+      closing_id TEXT NOT NULL,
+      actor_id TEXT NOT NULL,
+      action TEXT NOT NULL CHECK(action IN ('created', 'updated')),
+      before_snapshot TEXT,
+      after_snapshot TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (closing_id) REFERENCES weekly_closings(id)
+    );
+  `);
+
+  const closingColumns = getAll<{ name: string }>('PRAGMA table_info(weekly_closings)');
+  const existingColumnNames = new Set(closingColumns.map(column => column.name));
+  const newColumns = [
+    ['sales_cash', 'REAL NOT NULL DEFAULT 0'],
+    ['sales_transfers', 'REAL NOT NULL DEFAULT 0'],
+    ['provider_costs', 'REAL NOT NULL DEFAULT 0'],
+    ['emelyh_profit', 'REAL NOT NULL DEFAULT 0'],
+    ['gaibelis_profit', 'REAL NOT NULL DEFAULT 0'],
+  ] as const;
+  const addedColumns = newColumns.filter(([name]) => !existingColumnNames.has(name));
+  for (const [name, definition] of addedColumns) {
+    db.run(`ALTER TABLE weekly_closings ADD COLUMN ${name} ${definition}`);
+  }
+
+  if (addedColumns.length) {
+    const legacyClosings = getAll<{ id: string; start_date: string; end_date: string; week_profit: number }>(
+      'SELECT id, start_date, end_date, week_profit FROM weekly_closings'
+    );
+    for (const closing of legacyClosings) {
+      const aggregate = getOne<{
+        sales_cash: number;
+        sales_transfers: number;
+        provider_costs: number;
+      }>(
+        `SELECT
+          COALESCE(SUM(CASE WHEN lower(trim(payment_method)) = 'efectivo' THEN total ELSE 0 END), 0) AS sales_cash,
+          COALESCE(SUM(CASE WHEN lower(trim(payment_method)) = 'transferencia' THEN total ELSE 0 END), 0) AS sales_transfers,
+          COALESCE((
+            SELECT SUM(items.cost_price * items.quantity)
+            FROM sale_items items
+            INNER JOIN sales cost_sales ON cost_sales.id = items.sale_id
+            WHERE date(cost_sales.date) >= date(?) AND date(cost_sales.date) <= date(?)
+          ), 0) AS provider_costs
+        FROM sales
+        WHERE date(date) >= date(?) AND date(date) <= date(?)`,
+        [closing.start_date, closing.end_date, closing.start_date, closing.end_date]
+      );
+      const salesCash = Math.round((aggregate?.sales_cash || 0) * 100) / 100;
+      const salesTransfers = Math.round((aggregate?.sales_transfers || 0) * 100) / 100;
+      const providerCosts = Math.round((aggregate?.provider_costs || 0) * 100) / 100;
+      const weekProfit = Math.round((salesCash + salesTransfers - providerCosts) * 100) / 100;
+      const emelyhProfit = Math.trunc(weekProfit * 100 / 2) / 100;
+      const gaibelisProfit = Math.round((weekProfit - emelyhProfit) * 100) / 100;
+      const timestamp = new Date().toISOString();
+
+      db.run(
+        `UPDATE weekly_closings
+         SET sales_cash=?, sales_transfers=?, provider_costs=?, week_profit=?,
+             emelyh_profit=?, gaibelis_profit=?, updated_by='system:migration-v2',
+             updated_at=?
+         WHERE id=?`,
+        [salesCash, salesTransfers, providerCosts, weekProfit, emelyhProfit, gaibelisProfit, timestamp, closing.id]
+      );
+      db.run(
+        `INSERT INTO weekly_closing_audit
+         (id, closing_id, actor_id, action, before_snapshot, after_snapshot, created_at)
+         VALUES (?, ?, ?, 'updated', ?, ?, ?)`,
+        [
+          `migration-v2-${closing.id}`,
+          closing.id,
+          'system:migration-v2',
+          JSON.stringify({ id: closing.id, weekProfit: closing.week_profit, migration: 'legacy weekly closing recalculated' }),
+          JSON.stringify({
+            id: closing.id,
+            startDate: closing.start_date,
+            endDate: closing.end_date,
+            salesCash,
+            salesTransfers,
+            providerCosts,
+            weekProfit,
+            emelyhProfit,
+            gaibelisProfit,
+          }),
+          timestamp,
+        ]
+      );
+    }
+  }
 }
 
 // Seed initial data
@@ -270,6 +401,7 @@ export async function importDatabase(buffer: ArrayBuffer): Promise<void> {
     db.close();
   }
   db = new SQL.Database(new Uint8Array(buffer));
+  migrateDatabase();
   await saveToOPFS();
 }
 

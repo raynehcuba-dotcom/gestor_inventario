@@ -1,4 +1,7 @@
-import { User, Product, Provider, Purchase, Sale, BusinessConfig, SaleItem, PurchaseItem } from './types';
+import {
+  User, Product, Provider, Purchase, Sale, BusinessConfig, SaleItem, PurchaseItem,
+  WeeklyClosing, WeeklyClosingAuditEntry, WeeklyClosingMetrics,
+} from './types';
 import { run, getAll, getOne, persist, simpleHash } from './database';
 
 function generateId(): string {
@@ -171,14 +174,16 @@ export async function saveSale(sale: Sale): Promise<void> {
 
   for (const item of sale.items) {
     const itemId = generateId();
-    run(`INSERT INTO sale_items (id, sale_id, product_id, product_name, quantity, unit_price, total) VALUES (?,?,?,?,?,?,?)`,
-      [itemId, sale.id, item.productId, item.productName, item.quantity, item.unitPrice, item.total]);
+    const product = getOne<any>('SELECT provider_id, cost_price FROM products WHERE id = ?', [item.productId]);
+    run(`INSERT INTO sale_items
+      (id, sale_id, product_id, product_name, quantity, unit_price, total, cost_price)
+      VALUES (?,?,?,?,?,?,?,?)`,
+      [itemId, sale.id, item.productId, item.productName, item.quantity, item.unitPrice, item.total, product?.cost_price || 0]);
     
     // Update stock
     run('UPDATE products SET stock = stock - ? WHERE id = ?', [item.quantity, item.productId]);
     
     // Register payable to provider (cost of product sold)
-    const product = getOne<any>('SELECT provider_id, cost_price FROM products WHERE id = ?', [item.productId]);
     if (product && product.provider_id) {
       const payableId = generateId();
       const payableAmount = product.cost_price * item.quantity;
@@ -339,6 +344,241 @@ export function getProviderBalance(providerId: string): number {
     }
   }
   return balance;
+}
+
+// ============ WEEKLY CLOSINGS ============
+
+function roundCurrency(value: number): number {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+export function getWeeklyClosingMetrics(startDate: string, endDate: string): WeeklyClosingMetrics {
+  if (!startDate || !endDate || endDate < startDate) {
+    return {
+      salesCash: 0,
+      salesTransfers: 0,
+      providerCosts: 0,
+      weekProfit: 0,
+      emelyhProfit: 0,
+      gaibelisProfit: 0,
+    };
+  }
+
+  const aggregate = getOne<{
+    sales_cash: number;
+    sales_transfers: number;
+    provider_costs: number;
+  }>(
+    `SELECT
+      COALESCE(SUM(CASE WHEN lower(trim(payment_method)) = 'efectivo' THEN total ELSE 0 END), 0) AS sales_cash,
+      COALESCE(SUM(CASE WHEN lower(trim(payment_method)) = 'transferencia' THEN total ELSE 0 END), 0) AS sales_transfers,
+      COALESCE((
+        SELECT SUM(items.cost_price * items.quantity)
+        FROM sale_items items
+        INNER JOIN sales cost_sales ON cost_sales.id = items.sale_id
+        WHERE date(cost_sales.date) >= date(?) AND date(cost_sales.date) <= date(?)
+      ), 0) AS provider_costs
+     FROM sales
+     WHERE date(date) >= date(?) AND date(date) <= date(?)`,
+    [startDate, endDate, startDate, endDate]
+  );
+  const salesCash = roundCurrency(aggregate?.sales_cash || 0);
+  const salesTransfers = roundCurrency(aggregate?.sales_transfers || 0);
+  const providerCosts = roundCurrency(aggregate?.provider_costs || 0);
+  const weekProfit = roundCurrency(salesCash + salesTransfers - providerCosts);
+  const emelyhProfit = Math.trunc(weekProfit * 100 / 2) / 100;
+
+  return {
+    salesCash,
+    salesTransfers,
+    providerCosts,
+    weekProfit,
+    emelyhProfit,
+    gaibelisProfit: roundCurrency(weekProfit - emelyhProfit),
+  };
+}
+
+function mapWeeklyClosing(row: Record<string, any>): WeeklyClosing {
+  return {
+    id: row.id,
+    startDate: row.start_date,
+    endDate: row.end_date,
+    salesCash: row.sales_cash,
+    salesTransfers: row.sales_transfers,
+    providerCosts: row.provider_costs,
+    weekProfit: row.week_profit,
+    emelyhProfit: row.emelyh_profit,
+    gaibelisProfit: row.gaibelis_profit,
+    createdBy: row.created_by,
+    updatedBy: row.updated_by,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    creatorName: row.creator_name || row.created_by,
+    updaterName: row.updater_name || (
+      row.updated_by === 'system:migration-v2' ? 'Migración del sistema' : row.updated_by
+    ),
+  };
+}
+
+const weeklyClosingSelect = `
+  SELECT w.*, creator.full_name AS creator_name, updater.full_name AS updater_name
+  FROM weekly_closings w
+  LEFT JOIN users creator ON creator.id = w.created_by
+  LEFT JOIN users updater ON updater.id = w.updated_by
+`;
+
+export function getWeeklyClosings(dateFrom = '', dateTo = ''): WeeklyClosing[] {
+  const conditions: string[] = [];
+  const params: string[] = [];
+  if (dateFrom) {
+    conditions.push('w.end_date >= ?');
+    params.push(dateFrom);
+  }
+  if (dateTo) {
+    conditions.push('w.start_date <= ?');
+    params.push(dateTo);
+  }
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  return getAll<Record<string, any>>(
+    `${weeklyClosingSelect} ${where} ORDER BY w.start_date DESC, w.created_at DESC`,
+    params
+  ).map(mapWeeklyClosing);
+}
+
+export async function saveWeeklyClosing(
+  id: string | null,
+  startDate: string,
+  endDate: string,
+  actorId: string
+): Promise<void> {
+  if (!startDate || !endDate || endDate < startDate) {
+    throw new Error('El período semanal no es válido.');
+  }
+  if (!actorId) {
+    throw new Error('No se pudo identificar al usuario que realiza el cuadre.');
+  }
+  const overlapping = getOne<{ id: string }>(
+    `SELECT id FROM weekly_closings
+     WHERE start_date <= ? AND end_date >= ? AND id != ?`,
+    [endDate, startDate, id || '']
+  );
+  if (overlapping) {
+    throw new Error('El período se solapa con otro cuadre semanal ya registrado.');
+  }
+
+  const metrics = getWeeklyClosingMetrics(startDate, endDate);
+  const timestamp = new Date().toISOString();
+  const closingId = id || generateId();
+  const previousRow = id
+    ? getOne<Record<string, any>>(`${weeklyClosingSelect} WHERE w.id = ?`, [id])
+    : null;
+  const beforeSnapshot = previousRow ? mapWeeklyClosing(previousRow) : null;
+  const values = [
+    startDate, endDate, metrics.salesCash, metrics.salesTransfers, metrics.providerCosts,
+    metrics.weekProfit, metrics.emelyhProfit, metrics.gaibelisProfit,
+  ];
+  const insertColumns = [
+    'id', 'start_date', 'end_date', 'sales_cash', 'sales_transfers', 'provider_costs',
+    'week_profit', 'emelyh_profit', 'gaibelis_profit', 'created_by',
+    'updated_by', 'created_at', 'updated_at',
+  ];
+  const insertValues: (string | number)[] = [
+    closingId, ...values, actorId, actorId, timestamp, timestamp,
+  ];
+  const legacyValues: Record<string, number> = {
+    cash_actual: 0,
+    transfers_total: 0,
+    transfers_emelyh: 0,
+    transfers_gaibe: 0,
+    cash_payable_providers: 0,
+    transfers_payable_providers: 0,
+    cash_receivable: 0,
+    cash_provider: 0,
+    week_difference: 0,
+    remainder: 0,
+    remainder_plus_profit: 0,
+    combined_cash: 0,
+    transfers_receivable: 0,
+  };
+  const closingColumns = getAll<{
+    name: string;
+    notnull: number;
+    dflt_value: string | null;
+    pk: number;
+  }>('PRAGMA table_info(weekly_closings)');
+  const suppliedColumns = new Set(insertColumns);
+  const requiredLegacyColumns = closingColumns.filter(column =>
+    column.notnull === 1 &&
+    column.dflt_value === null &&
+    column.pk === 0 &&
+    !suppliedColumns.has(column.name)
+  );
+  for (const column of requiredLegacyColumns) {
+    if (!(column.name in legacyValues)) {
+      throw new Error(`No se puede guardar el cuadre: falta compatibilidad con la columna obligatoria "${column.name}".`);
+    }
+    insertColumns.push(column.name);
+    insertValues.push(legacyValues[column.name]);
+  }
+
+  run('BEGIN TRANSACTION');
+  try {
+    if (previousRow) {
+      run(
+        `UPDATE weekly_closings SET
+          start_date=?, end_date=?, sales_cash=?, sales_transfers=?, provider_costs=?,
+          week_profit=?, emelyh_profit=?, gaibelis_profit=?,
+          updated_by=?, updated_at=? WHERE id=?`,
+        [...values, actorId, timestamp, closingId]
+      );
+    } else {
+      run(
+        `INSERT INTO weekly_closings (${insertColumns.join(', ')})
+         VALUES (${insertColumns.map(() => '?').join(', ')})`,
+        insertValues
+      );
+    }
+
+    const savedRow = getOne<Record<string, any>>(`${weeklyClosingSelect} WHERE w.id = ?`, [closingId]);
+    if (!savedRow) throw new Error('No se pudo recuperar el cuadre semanal guardado.');
+    const afterSnapshot = mapWeeklyClosing(savedRow);
+    run(
+      `INSERT INTO weekly_closing_audit
+        (id, closing_id, actor_id, action, before_snapshot, after_snapshot, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        generateId(), closingId, actorId, previousRow ? 'updated' : 'created',
+        beforeSnapshot ? JSON.stringify(beforeSnapshot) : null,
+        JSON.stringify(afterSnapshot), timestamp,
+      ]
+    );
+    run('COMMIT');
+  } catch (error) {
+    run('ROLLBACK');
+    throw error;
+  }
+
+  await persist();
+}
+
+export function getWeeklyClosingAudit(closingId: string): WeeklyClosingAuditEntry[] {
+  return getAll<Record<string, any>>(
+    `SELECT a.*, u.full_name AS actor_name FROM weekly_closing_audit a
+     LEFT JOIN users u ON u.id = a.actor_id
+     WHERE a.closing_id = ? ORDER BY a.created_at DESC`,
+    [closingId]
+  ).map(row => ({
+    id: row.id,
+    closingId: row.closing_id,
+    actorId: row.actor_id,
+    actorName: row.actor_name || (
+      row.actor_id === 'system:migration-v2' ? 'Migración del sistema' : row.actor_id
+    ),
+    action: row.action,
+    beforeSnapshot: row.before_snapshot ? JSON.parse(row.before_snapshot) : null,
+    afterSnapshot: JSON.parse(row.after_snapshot),
+    createdAt: row.created_at,
+  }));
 }
 
 // ============ DB EXPORT/IMPORT ============
