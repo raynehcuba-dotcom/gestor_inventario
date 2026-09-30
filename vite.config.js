@@ -2,8 +2,8 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
-export default defineConfig(({ command }) => ({
-  base: command === 'build' ? '/gestor_inventario/' : '/',
+export default defineConfig(({ mode }) => ({
+  base: mode === 'desktop' ? './' : '/gestor_inventario/',
   plugins: [react(), tailwindcss()],
   server: {
     host: "0.0.0.0",
